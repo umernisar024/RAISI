@@ -407,7 +407,7 @@ The following are in `.gitignore` and must stay there:
 Before exposing this application to real users, verify the following:
 
 **Authentication**
-- [ ] Default admin password changed from `SSCP@123`
+- [ ] Initial admin password noted from server logs (`journalctl -u siagent | grep "FIRST RUN"`) and changed on first login
 - [ ] All user accounts use strong, unique passwords (8+ characters)
 - [ ] Login lockout thresholds reviewed and appropriate for your context
 
