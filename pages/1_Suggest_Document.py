@@ -6,6 +6,7 @@ data/raw/to_be_reviewed/ and will NOT be ingested until a reviewer or admin
 approves and moves them to an appropriate KB folder.
 """
 
+import os
 import sys
 from pathlib import Path
 from urllib.parse import urlparse

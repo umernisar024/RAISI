@@ -9,6 +9,8 @@ Roles:
     user  — chat, persona selection, response rating and feedback
 """
 
+import csv
+import io
 import os
 import re
 import subprocess
@@ -139,14 +141,25 @@ st.set_page_config(
 )
 
 # ── Layout CSS ────────────────────────────────────────────────────────────────
-# Add bottom padding so the last message isn't hidden behind the sticky chat input.
-# We do NOT override position/left/right — Streamlit already keeps st.chat_input()
-# correctly anchored within the main content column (to the right of the sidebar).
-st.markdown("""
+# Hide the multipage sidebar nav (page list) and the entire sidebar
+# until the user has logged in — blank white screen before login.
+# After login the sidebar is restored by normal Streamlit rendering.
+_logged_in = st.session_state.get("logged_in", False)
+
+st.markdown(f"""
 <style>
-section.main > div.block-container {
+/* Always add bottom padding so last message clears the sticky chat input */
+section.main > div.block-container {{
     padding-bottom: 90px !important;
-}
+}}
+{"" if _logged_in else """
+/* Hide sidebar and page-nav list before login */
+[data-testid="stSidebarNav"],
+[data-testid="stSidebar"],
+section[data-testid="stSidebar"] {{
+    display: none !important;
+}}
+"""}
 </style>
 """, unsafe_allow_html=True)
 
@@ -494,6 +507,17 @@ def feedback_widget(idx: int, question: str, answer_text: str,
                 st.rerun(scope="fragment")
 
 
+def _to_csv(rows: list[dict]) -> bytes:
+    """Convert a list of dicts to a UTF-8 CSV byte string (opens in Excel)."""
+    if not rows:
+        return b""
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=rows[0].keys(), extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return ("﻿" + buf.getvalue()).encode("utf-8")  # BOM so Excel opens UTF-8 correctly
+
+
 def _render_sources(sources: list[dict]):
     with st.expander(f"Sources ({len(sources)} chunks retrieved)"):
         for i, r in enumerate(sources, 1):
@@ -750,11 +774,49 @@ if is_admin:
 
         st.divider()
 
+        # ── Export and clear actions ──────────────────────────────────────────
+        _all_feedback = load_feedback(limit=100_000)   # load all for export
+        _fcol1, _fcol2, _fcol3 = st.columns([2, 2, 4])
+
+        with _fcol1:
+            st.download_button(
+                label="⬇️ Download as CSV",
+                data=_to_csv(_all_feedback),
+                file_name="feedback_log.csv",
+                mime="text/csv",
+                disabled=not _all_feedback,
+                use_container_width=True,
+            )
+
+        with _fcol2:
+            if st.button("🗑️ Clear all feedback", use_container_width=True,
+                         disabled=not _all_feedback):
+                st.session_state["confirm_clear_feedback"] = True
+
+        if st.session_state.get("confirm_clear_feedback"):
+            st.warning("This will permanently delete all feedback entries. Are you sure?")
+            _cc1, _cc2 = st.columns(2)
+            with _cc1:
+                if st.button("✅ Yes, clear feedback", type="primary", use_container_width=True):
+                    from src.feedback import FEEDBACK_FILE
+                    FEEDBACK_FILE.unlink(missing_ok=True)
+                    log_event("admin_action", username=current_user["username"],
+                              detail="feedback log cleared")
+                    st.session_state.pop("confirm_clear_feedback", None)
+                    st.toast("Feedback log cleared.")
+                    st.rerun()
+            with _cc2:
+                if st.button("✕ Cancel", use_container_width=True):
+                    st.session_state.pop("confirm_clear_feedback", None)
+                    st.rerun()
+
+        st.divider()
+
         entries = load_feedback(limit=50)
         if not entries:
             st.info("No feedback submitted yet.")
         else:
-            st.caption(f"Showing {len(entries)} most recent entries")
+            st.caption(f"Showing {len(entries)} most recent entries (download CSV for full log)")
             for e in entries:
                 icon = "👍" if "👍" in e.get("rating", "") else "👎"
                 with st.expander(
@@ -775,7 +837,7 @@ if is_admin:
 if is_admin:
     with tab_security:
 
-        sec_entries = load_security_log(limit=100)
+        sec_entries = load_security_log(limit=100_000)   # all for counts + export
 
         # Summary counts
         event_types = {}
@@ -797,10 +859,49 @@ if is_admin:
 
         st.divider()
 
-        if not sec_entries:
+        # ── Export and clear actions ──────────────────────────────────────────
+        _scol1, _scol2, _scol3 = st.columns([2, 2, 4])
+
+        with _scol1:
+            st.download_button(
+                label="⬇️ Download as CSV",
+                data=_to_csv(list(reversed(sec_entries))),  # oldest first for CSV
+                file_name="security_log.csv",
+                mime="text/csv",
+                disabled=not sec_entries,
+                use_container_width=True,
+            )
+
+        with _scol2:
+            if st.button("🗑️ Clear security log", use_container_width=True,
+                         disabled=not sec_entries):
+                st.session_state["confirm_clear_security"] = True
+
+        if st.session_state.get("confirm_clear_security"):
+            st.warning("This will permanently delete all security log entries. Are you sure?")
+            _sc1, _sc2 = st.columns(2)
+            with _sc1:
+                if st.button("✅ Yes, clear log", type="primary", use_container_width=True):
+                    from src.security_log import SECURITY_LOG_FILE
+                    SECURITY_LOG_FILE.unlink(missing_ok=True)
+                    log_event("admin_action", username=current_user["username"],
+                              detail="security log cleared")
+                    st.session_state.pop("confirm_clear_security", None)
+                    st.toast("Security log cleared.")
+                    st.rerun()
+            with _sc2:
+                if st.button("✕ Cancel ", use_container_width=True):  # trailing space avoids key clash
+                    st.session_state.pop("confirm_clear_security", None)
+                    st.rerun()
+
+        st.divider()
+
+        # Show most recent 100 in the UI
+        sec_entries_display = sec_entries[:100]
+        if not sec_entries_display:
             st.info("No security events recorded yet.")
         else:
-            st.caption(f"Showing {len(sec_entries)} most recent events")
+            st.caption(f"Showing {len(sec_entries_display)} most recent events (download CSV for full log)")
             EVENT_ICONS = {
                 "failed_login": "⚠️",
                 "account_locked": "🔒",
@@ -811,7 +912,7 @@ if is_admin:
                 "password_changed": "🔑",
                 "chat_error": "❌",
             }
-            for e in sec_entries:
+            for e in sec_entries_display:
                 icon = EVENT_ICONS.get(e.get("event", ""), "•")
                 label = (
                     f"{icon} {e['timestamp']}  —  "

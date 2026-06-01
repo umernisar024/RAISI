@@ -42,7 +42,10 @@ def log_event(
 
 
 def load_security_log(limit: int = 200) -> list[dict]:
-    """Load the most recent N security log entries, newest first."""
+    """
+    Load the most recent N security log entries, newest first.
+    Pass limit=0 or a very large number to load all entries (e.g. for CSV export).
+    """
     if not SECURITY_LOG_FILE.exists():
         return []
     try:
@@ -53,6 +56,7 @@ def load_security_log(limit: int = 200) -> list[dict]:
                 entries.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-        return list(reversed(entries))[:limit]
+        reversed_entries = list(reversed(entries))
+        return reversed_entries[:limit] if limit else reversed_entries
     except Exception:
         return []
