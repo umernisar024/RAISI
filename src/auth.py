@@ -78,14 +78,30 @@ def _save(users: dict) -> None:
 
 
 def _init() -> None:
-    """Create the default admin account on first run."""
+    """
+    Create the default admin account on first run with a random password.
+
+    The generated password is printed to stderr so the deploying engineer
+    can note it down and log in for the first time.  It is never stored in
+    source code or version control.
+    """
+    import sys
+    initial_pw = secrets.token_urlsafe(16)   # 128-bit URL-safe random token
     _save({
         "admin": {
-            "password": _hash_password("SSCP@123"),
+            "password": _hash_password(initial_pw),
             "role": "admin",
             "name": "Administrator",
         }
     })
+    # Write to stderr so it appears in journalctl / server logs, not in
+    # the Streamlit UI or any log file that ships with the repo.
+    print("\n" + "=" * 60, file=sys.stderr)
+    print("FIRST RUN — admin account created.", file=sys.stderr)
+    print(f"  Username : admin", file=sys.stderr)
+    print(f"  Password : {initial_pw}", file=sys.stderr)
+    print("Log in and change this password immediately.", file=sys.stderr)
+    print("=" * 60 + "\n", file=sys.stderr)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -95,10 +111,19 @@ def authenticate(username: str, password: str) -> dict | None:
     Validate credentials. Returns user dict on success, None on failure.
     Automatically upgrades legacy SHA-256 hashes to PBKDF2 on success.
     Returned dict: { username, role, name }
+
+    Security note: always runs a full PBKDF2 computation regardless of
+    whether the username exists.  This prevents timing-based username
+    enumeration (an attacker measuring response time to distinguish
+    "user not found" from "wrong password").
     """
     users = _load()
     user = users.get(username.strip())
+
     if not user:
+        # Run a dummy PBKDF2 with a fixed salt so the response time is
+        # indistinguishable from a real failed login.
+        _pbkdf2(password, b"\x00" * 32)
         return None
 
     stored = user["password"]

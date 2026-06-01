@@ -167,8 +167,8 @@ class RAGChat:
         context = self._build_context(sources)
 
         augmented = (
-            f"Context from knowledge base:\n\n{context}\n\n"
-            f"---\n\nQuestion: {user_message}"
+            f"<retrieved_context>\n{context}\n</retrieved_context>\n\n"
+            f"<user_question>\n{user_message}\n</user_question>"
         )
 
         messages = self.history + [{"role": "user", "content": augmented}]
@@ -196,9 +196,13 @@ class RAGChat:
         sources = self.retrieve(user_message)
         context = self._build_context(sources)
 
+        # XML-style tags provide stronger structural separation between retrieved
+        # document content and the user's question.  This makes it harder for
+        # injected instructions inside a document chunk to be mistaken for a
+        # system directive or a new user turn by the LLM.
         augmented = (
-            f"Context from knowledge base:\n\n{context}\n\n"
-            f"---\n\nQuestion: {user_message}"
+            f"<retrieved_context>\n{context}\n</retrieved_context>\n\n"
+            f"<user_question>\n{user_message}\n</user_question>"
         )
         messages = self.history + [{"role": "user", "content": augmented}]
         generator = llm_stream(system_prompt=self.system_prompt, messages=messages)

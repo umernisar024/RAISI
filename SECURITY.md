@@ -8,16 +8,24 @@ Use this as a checklist when deploying any document-grounded AI assistant.
 
 ## Quick checklist
 
-- [ ] Passwords hashed with PBKDF2 or bcrypt (not plain SHA-256)
-- [ ] Login brute force lockout after N failed attempts
-- [ ] Input length and character validation on all user inputs
-- [ ] Friendly error messages — no raw tracebacks shown to users
-- [ ] Security event log (failed logins, admin actions, errors)
-- [ ] SSRF protection on any URL-fetching functionality
-- [ ] Sensitive files excluded from version control (.gitignore)
-- [ ] API keys stored in .env — never hardcoded in source
-- [ ] Role-based access enforced server-side, not just in the UI
-- [ ] Default credentials changed before any shared or public deployment
+- [x] Passwords hashed with PBKDF2-HMAC-SHA256, 600K iterations, random 32-byte salt
+- [x] Login brute force lockout (5 attempts → 5 min lockout)
+- [x] Timing-safe authentication — dummy PBKDF2 run when username not found
+- [x] Input length and character validation on all user inputs
+- [x] Friendly error messages — no raw tracebacks shown to users
+- [x] Security event log (failed logins, admin actions, submissions, errors)
+- [x] SSRF protection with DNS-pinned connections (resolves once, connects to IP)
+- [x] File upload magic bytes validation (not extension-only)
+- [x] URL scheme validation on user-supplied links (http/https only)
+- [x] Sensitive files excluded from version control (.gitignore)
+- [x] API keys stored in .env — never hardcoded in source
+- [x] Default admin password randomly generated on first run (never hardcoded)
+- [x] Role-based access enforced server-side, not just in the UI
+- [x] Session idle timeout (auto-logout after 120 minutes of inactivity)
+- [x] XML-delimited prompt context to harden against prompt injection
+- [ ] Dependencies pinned to exact versions (`pip freeze > requirements.lock`)
+- [ ] `pip-audit` run before each deployment
+- [ ] SSL certificate renewed (auto-renews via Certbot — verify with `certbot renew --dry-run`)
 
 ---
 
@@ -158,8 +166,8 @@ if st.session_state.login_attempts >= MAX_LOGIN_ATTEMPTS:
 Every failed login is written to the security log so patterns can be detected.
 
 ### Additional design recommendations
-- **Change the default admin password immediately** after first deployment. The default (`SSCP@123`) is documented in this repository.
-- Set a session timeout appropriate to your environment. Streamlit sessions expire when the browser tab is closed, but consider adding an explicit idle timeout for sensitive deployments.
+- The default admin password is **randomly generated on first run** and printed to the server's stderr (visible in `journalctl`). There is no hardcoded default — each deployment gets a unique credential.
+- Session idle timeout is enforced at 120 minutes by default. Set `SESSION_TIMEOUT_MINUTES` in `.env` to adjust. Sessions are invalidated server-side on expiry.
 - For public deployments, consider placing the app behind a VPN or identity-aware proxy rather than relying solely on application-level authentication.
 
 ### How to apply this to your chatbot
@@ -302,10 +310,13 @@ A lightweight append-only security log at `data/security_log.jsonl`. Every entry
 | `successful_login` | User authenticates correctly |
 | `failed_login` | Wrong username or password |
 | `account_locked` | Lockout threshold reached |
+| `session_expired` | Session idle timeout reached |
 | `user_created` | Admin adds a new user |
 | `user_deleted` | Admin removes a user |
 | `password_changed` | Admin changes a password |
-| `admin_action` | System prompt saved |
+| `admin_action` | System prompt saved, ingestion run, KB submission reviewed |
+| `document_submitted` | User submits a document for KB review |
+| `suspicious_upload` | Uploaded file magic bytes do not match declared extension |
 | `chat_error` | LLM or retrieval pipeline error |
 
 The Security Log tab in the admin UI shows a summary (failed logins, lockouts, admin actions) with expandable detail per event.
@@ -354,18 +365,17 @@ Every URL is validated before fetching. Blocked categories:
 Only `http://` and `https://` schemes are allowed.
 
 ```python
-def _is_safe_url(url: str) -> tuple[bool, str]:
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        return False, f"Scheme '{parsed.scheme}' not allowed."
-    ip = ipaddress.ip_address(socket.gethostbyname(parsed.hostname))
-    for network in _BLOCKED_NETWORKS:
-        if ip in network:
-            return False, f"Host resolves to internal address ({ip}) — blocked."
-    return True, ""
+# 1. Resolve hostname and verify IP is not in any blocked range
+resolved_ip, reason = _resolve_and_check(parsed.hostname)
+if resolved_ip is None:
+    return False, reason
+
+# 2. Use the pre-resolved IP for the actual connection — DNS is not consulted
+#    again, closing the DNS rebinding window between the check and the request
+raw_html = _fetch_with_pinned_ip(url, resolved_ip, timeout=15)
 ```
 
-The check resolves the hostname to an IP at fetch time — this prevents attacks where a hostname initially resolves to a public IP but is switched to an internal IP after the check (DNS rebinding).
+**DNS rebinding hardening:** the resolved IP from the safety check is reused for the actual TCP connection. The OS resolver is not called a second time, so the DNS record cannot be changed between the check and the request. For HTTPS connections, `_server_hostname` is set to the original hostname so TLS certificate validation and SNI still work correctly against the domain name, not the IP.
 
 ### How to apply this to your chatbot
 - Any feature that makes outbound HTTP requests must validate the destination

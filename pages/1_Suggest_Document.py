@@ -8,6 +8,7 @@ approves and moves them to an appropriate KB folder.
 
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -19,6 +20,33 @@ from src.kb_submissions import (
     KB_SUBFOLDERS, KB_FOLDER_LABELS, SUPPORTED_UPLOAD_TYPES,
     MAX_UPLOAD_MB, save_submission, ensure_kb_dirs,
 )
+from src.security_log import log_event
+
+# ── File type validation (magic bytes) ───────────────────────────────────────
+# Extension-only checks can be bypassed by renaming files.  Verify the actual
+# file header matches the declared type before saving.
+_MAGIC_BYTES: dict[str, bytes] = {
+    ".pdf":  b"%PDF",
+    ".docx": b"PK\x03\x04",   # DOCX / XLSX / PPTX are ZIP-based (PK signature)
+}
+
+def _check_magic(file_bytes: bytes, extension: str) -> bool:
+    """Return True if the file's magic bytes match the declared extension."""
+    expected = _MAGIC_BYTES.get(extension.lower())
+    if not expected:
+        return True   # .txt / .md — no magic bytes to check
+    return file_bytes[:len(expected)] == expected
+
+
+def _validate_url(url: str) -> bool:
+    """Return True if URL uses an allowed scheme (http or https only)."""
+    if not url.strip():
+        return True   # URL is optional — blank is fine
+    try:
+        parsed = urlparse(url.strip())
+        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    except Exception:
+        return False
 
 # ── Auth check ────────────────────────────────────────────────────────────────
 current_user = require_login()  # any logged-in user may submit
@@ -75,7 +103,7 @@ with st.form("suggest_doc_form", clear_on_submit=True):
     submitted = st.form_submit_button("📤 Submit for Review", use_container_width=True)
 
 if submitted:
-    # Validation
+    # ── Validation ────────────────────────────────────────────────────────────
     errors = []
     if not content_name.strip():
         errors.append("Document name is required.")
@@ -83,10 +111,31 @@ if submitted:
         errors.append("Description is required.")
     if not url.strip() and uploaded_file is None:
         errors.append("Please provide either a URL or upload a file.")
+
+    # URL scheme check — block javascript:, file://, data:, etc.
+    if url.strip() and not _validate_url(url):
+        errors.append("URL must start with http:// or https://")
+
     if uploaded_file is not None:
-        size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+        file_bytes_val = uploaded_file.getvalue()
+        ext = Path(uploaded_file.name).suffix.lower()
+
+        # Size check
+        size_mb = len(file_bytes_val) / (1024 * 1024)
         if size_mb > MAX_UPLOAD_MB:
             errors.append(f"File is {size_mb:.1f} MB — maximum is {MAX_UPLOAD_MB} MB.")
+
+        # Magic bytes check — verify the file is actually what its extension claims
+        if not _check_magic(file_bytes_val, ext):
+            errors.append(
+                f"File content does not match its extension ({ext}). "
+                "Please upload a valid file."
+            )
+            log_event(
+                "suspicious_upload",
+                username=current_user["username"],
+                detail=f"magic bytes mismatch: {uploaded_file.name} (declared {ext})",
+            )
 
     if errors:
         for e in errors:
@@ -103,6 +152,17 @@ if submitted:
             url=url.strip(),
             category=selected_folder,
             submitted_by=current_user["username"],
+        )
+
+        # Audit log — track who submitted what for the security trail
+        log_event(
+            "document_submitted",
+            username=current_user["username"],
+            detail=(
+                f"id={record['id']} file={filename} "
+                f"category={selected_folder} "
+                f"{'url=' + url.strip() if url.strip() else 'no-url'}"
+            ),
         )
 
         st.success(

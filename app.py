@@ -215,6 +215,28 @@ if not st.session_state.get("logged_in"):
     show_login()
     st.stop()
 
+# ── Session idle timeout ───────────────────────────────────────────────────────
+# Auto-logout after SESSION_TIMEOUT_MINUTES of inactivity (default 120 min).
+# last_activity is updated on every page render, so any interaction resets
+# the timer.  A stale open browser tab is logged out on its next refresh.
+import time as _time
+_SESSION_TIMEOUT_SECS = int(os.getenv("SESSION_TIMEOUT_MINUTES", "120")) * 60
+_now = _time.time()
+
+if "last_activity" not in st.session_state:
+    st.session_state.last_activity = _now
+elif _now - st.session_state.last_activity > _SESSION_TIMEOUT_SECS:
+    _expired_user = st.session_state.get("current_user", {}).get("username", "unknown")
+    log_event("session_expired", username=_expired_user,
+              detail=f"idle for >{_SESSION_TIMEOUT_SECS // 60} min")
+    for _k in ["logged_in", "current_user", "rag", "messages",
+               "active_persona", "system_prompt_text", "ratings", "last_activity"]:
+        st.session_state.pop(_k, None)
+    st.warning("⏱ Your session has expired due to inactivity. Please log in again.")
+    st.rerun()
+else:
+    st.session_state.last_activity = _now
+
 
 # ── Convenience shortcuts after login ─────────────────────────────────────────
 current_user = st.session_state.current_user
@@ -840,6 +862,14 @@ if is_admin:
             )
 
         if run_clicked:
+            # Server-side validation: confirm selected_folder is in the known
+            # allow-list before passing it to the subprocess.  The UI selectbox
+            # already limits the choices, but defence-in-depth requires
+            # validating on the server regardless of how the value arrived.
+            if selected_folder != "All folders" and selected_folder not in KB_SUBFOLDERS:
+                st.error(f"Invalid folder '{selected_folder}'. Must be one of the known KB subfolders.")
+                st.stop()
+
             # Build command — same Python interpreter as the running app
             _project_root = Path(__file__).parent
             cmd = [sys.executable, "-X", "utf8",

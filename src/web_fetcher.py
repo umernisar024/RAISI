@@ -6,14 +6,15 @@ Usage:
     Already-fetched pages are skipped unless --refresh is passed.
 """
 
+import http.client
 import ipaddress
 import os
 import re
 import hashlib
 import socket
+import ssl as _ssl_module
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 from html.parser import HTMLParser
 from rich.console import Console
@@ -37,6 +38,28 @@ _BLOCKED_NETWORKS = [
 ]
 
 
+def _resolve_and_check(host: str) -> tuple[str | None, str]:
+    """
+    Resolve hostname to IP and verify it is not in a blocked private range.
+
+    Returns (ip_str, "") on success, (None, reason) if blocked.
+    Separating resolution from the safety check lets the caller reuse the
+    resolved IP for the actual connection — preventing DNS rebinding attacks
+    where the DNS record changes between the safety check and the request.
+    """
+    try:
+        ip_str = socket.gethostbyname(host)
+        ip = ipaddress.ip_address(ip_str)
+        for network in _BLOCKED_NETWORKS:
+            if ip in network:
+                return None, f"Host resolves to a private/internal address ({ip}) — blocked for security."
+        return ip_str, ""
+    except socket.gaierror:
+        return None, f"Could not resolve hostname '{host}'."
+    except ValueError:
+        return None, "Invalid IP address resolved."
+
+
 def _is_safe_url(url: str) -> tuple[bool, str]:
     """
     Return (True, "") if the URL is safe to fetch.
@@ -58,19 +81,52 @@ def _is_safe_url(url: str) -> tuple[bool, str]:
     if not host:
         return False, "No hostname in URL."
 
-    # Resolve hostname to IP and check against blocked ranges
-    try:
-        ip_str = socket.gethostbyname(host)
-        ip = ipaddress.ip_address(ip_str)
-        for network in _BLOCKED_NETWORKS:
-            if ip in network:
-                return False, f"Host resolves to a private/internal address ({ip}) — blocked for security."
-    except socket.gaierror:
-        return False, f"Could not resolve hostname '{host}'."
-    except ValueError:
-        return False, "Invalid IP address resolved."
+    ip_str, reason = _resolve_and_check(host)
+    if ip_str is None:
+        return False, reason
 
     return True, ""
+
+
+def _fetch_with_pinned_ip(url: str, resolved_ip: str, timeout: int = 15) -> str:
+    """
+    Fetch URL by connecting directly to resolved_ip rather than letting the OS
+    re-resolve the hostname.  This closes the DNS rebinding window that exists
+    when the safety check and the actual connection use separate DNS lookups.
+
+    For HTTPS: the TLS handshake uses the original hostname for SNI and
+    certificate validation, so certificate pinning still works correctly.
+    For HTTP:  the TCP connection goes straight to the pre-checked IP.
+
+    Returns the raw HTML/text body as a string.
+    Raises http.client.HTTPException, OSError, or ssl.SSLError on failure.
+    """
+    parsed = urlparse(url)
+    host = parsed.hostname
+    port = parsed.port
+    path = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
+    req_headers = {**HEADERS, "Host": host}
+
+    if parsed.scheme == "https":
+        port = port or 443
+        ctx = _ssl_module.create_default_context()
+        conn = http.client.HTTPSConnection(
+            resolved_ip, port=port, timeout=timeout, context=ctx
+        )
+        # Override the hostname used for SNI and cert validation so that TLS
+        # checks against the original domain name, not the raw IP address.
+        conn._server_hostname = host
+    else:
+        port = port or 80
+        conn = http.client.HTTPConnection(resolved_ip, port=port, timeout=timeout)
+
+    conn.request("GET", path, headers=req_headers)
+    resp = conn.getresponse()
+
+    if resp.status >= 400:
+        raise http.client.HTTPException(f"HTTP {resp.status} {resp.reason}")
+
+    return resp.read().decode("utf-8", errors="replace")
 
 
 class _TextExtractor(HTMLParser):
@@ -128,21 +184,36 @@ def fetch_url(url: str, output_dir: Path = FETCH_DIR, refresh: bool = False) -> 
         console.print(f"  [dim]↩ Already fetched, skipping: {url}[/dim]")
         return out_path
 
-    # SSRF check — block internal/private destinations
-    safe, reason = _is_safe_url(url)
-    if not safe:
+    # SSRF check — resolve hostname and verify it is not a private/internal IP.
+    # We capture the resolved IP here and reuse it for the actual connection so
+    # that the DNS record cannot be swapped between the safety check and the
+    # request (DNS rebinding attack).
+    try:
+        parsed_for_check = urlparse(url)
+    except Exception:
+        console.print(f"  [red]✗ Could not parse URL: {url}[/red]")
+        return None
+
+    if parsed_for_check.scheme not in ("http", "https"):
+        console.print(f"  [red]✗ Blocked (scheme '{parsed_for_check.scheme}' not allowed): {url}[/red]")
+        return None
+
+    if not parsed_for_check.hostname:
+        console.print(f"  [red]✗ Blocked (no hostname): {url}[/red]")
+        return None
+
+    resolved_ip, reason = _resolve_and_check(parsed_for_check.hostname)
+    if resolved_ip is None:
         console.print(f"  [red]✗ Blocked ({reason}): {url}[/red]")
         return None
 
     try:
-        req = Request(url, headers=HEADERS)
-        with urlopen(req, timeout=15) as resp:
-            raw_html = resp.read().decode("utf-8", errors="replace")
-    except HTTPError as e:
-        console.print(f"  [red]✗ HTTP {e.code}: {url}[/red]")
+        raw_html = _fetch_with_pinned_ip(url, resolved_ip, timeout=15)
+    except http.client.HTTPException as e:
+        console.print(f"  [red]✗ {e}: {url}[/red]")
         return None
-    except URLError as e:
-        console.print(f"  [red]✗ Failed to reach {url}: {e.reason}[/red]")
+    except OSError as e:
+        console.print(f"  [red]✗ Failed to reach {url}: {e}[/red]")
         return None
     except Exception as e:
         console.print(f"  [red]✗ Unexpected error fetching {url}: {e}[/red]")
