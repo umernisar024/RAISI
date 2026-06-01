@@ -469,6 +469,201 @@ python -X utf8 scripts/run_eval.py
 
 ---
 
+## Optional: pgvector on Amazon RDS (alternative to ChromaDB)
+
+> **Default is ChromaDB on EBS** — it works well for most deployments and requires no extra infrastructure.
+> Follow these steps only if you want a fully managed, AWS-native vector database with automatic backups,
+> point-in-time recovery, and Multi-AZ failover.
+>
+> **Code change required:** one file — `src/store.py` must be rewritten to use psycopg2 + pgvector
+> instead of ChromaDB. All other files (`app.py`, `chat.py`, `ingestor.py`, etc.) are unchanged.
+> Contact the development team to request the pgvector version of `src/store.py` before proceeding.
+
+---
+
+### Why pgvector on RDS?
+
+| | ChromaDB on EBS (default) | pgvector on RDS (this section) |
+|---|---|---|
+| Managed backups | Manual EBS snapshots | Automatic, point-in-time recovery |
+| Multi-AZ failover | No | Yes (one checkbox) |
+| Resize without touching EC2 | No | Yes — DB scales independently |
+| SQL access to inspect chunks | No | Yes — full PostgreSQL query access |
+| AWS Credits usage | Minimal | Moderate (~$60-100/month for t3.medium Multi-AZ) |
+
+---
+
+### Step A — Create the RDS PostgreSQL instance
+
+1. Go to **RDS > Create database** in the AWS Console.
+
+2. Choose:
+   - Engine: **PostgreSQL** (version 15 or 16)
+   - Template: **Production** (enables Multi-AZ and backups)
+   - DB instance identifier: `siagent-vectordb`
+   - Instance class: `db.t3.medium` (2 vCPU, 4 GB) — upgrade to `db.t3.large` for large KBs
+   - Storage: 50 GB gp3, enable storage autoscaling
+
+3. Connectivity:
+   - VPC: same VPC as your EC2 instance
+   - **Do NOT enable public access** — the DB should only be reachable from within the VPC
+   - Create a new security group: `siagent-rds-sg`
+
+4. Authentication:
+   - Master username: `siagent`
+   - Choose a strong master password and save it in AWS Secrets Manager
+
+5. Additional configuration:
+   - Initial database name: `siagent`
+   - Enable automated backups: retention 7 days
+   - Enable deletion protection
+
+6. Click **Create database**. Takes 5–10 minutes.
+
+---
+
+### Step B — Allow EC2 to connect to RDS
+
+1. Go to the **EC2 security group** (the one attached to your Streamlit instance).
+   Copy its Security Group ID (e.g. `sg-0abc123`).
+
+2. Go to the **RDS security group** (`siagent-rds-sg`) > Edit inbound rules:
+
+   | Type            | Protocol | Port | Source                  |
+   |-----------------|----------|------|-------------------------|
+   | PostgreSQL      | TCP      | 5432 | EC2 security group ID   |
+
+   Use the EC2 security group as the source (not an IP) — this is more robust and survives IP changes.
+
+---
+
+### Step C — Enable the pgvector extension
+
+Connect from your EC2 instance using psql:
+
+```bash
+# Install psql client on the EC2 instance (if not already installed)
+sudo apt-get install -y postgresql-client
+
+# Connect to RDS (get the endpoint from RDS > your instance > Connectivity)
+psql -h YOUR-RDS-ENDPOINT.rds.amazonaws.com -U siagent -d siagent
+```
+
+Once connected, run:
+
+```sql
+-- Enable the vector extension (available on RDS PostgreSQL 15+)
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Verify it loaded
+SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
+-- Should return: vector | 0.7.x
+
+\q
+```
+
+---
+
+### Step D — Install Python dependencies
+
+```bash
+cd /opt/siagent
+source .venv/bin/activate
+pip install psycopg2-binary pgvector
+```
+
+---
+
+### Step E — Deploy the pgvector version of store.py
+
+Replace `src/store.py` with the pgvector version (request from the development team).
+The replacement file exposes the same interface as the ChromaDB version:
+`add_chunks()`, `search()`, `get_stats()`, `clear()` — nothing else in the app changes.
+
+---
+
+### Step F — Update .env
+
+Add the RDS connection string and remove the ChromaDB variables:
+
+```bash
+nano /opt/siagent/.env
+```
+
+Remove or comment out:
+```
+# CHROMA_DB_PATH=...
+# CHROMA_COLLECTION=...
+```
+
+Add:
+```
+# pgvector on RDS
+DATABASE_URL=postgresql://siagent:YOUR_PASSWORD@YOUR-RDS-ENDPOINT.rds.amazonaws.com:5432/siagent
+```
+
+> **Security note:** the password in `DATABASE_URL` is sensitive. Keep `.env` permissions at 600
+> (`chmod 600 /opt/siagent/.env`). For production, consider loading the password from
+> AWS Secrets Manager instead of storing it in .env.
+
+---
+
+### Step G — Run ingestion to build the vector index in RDS
+
+The ingestion script creates the table and index automatically on first run:
+
+```bash
+cd /opt/siagent
+source .venv/bin/activate
+python -X utf8 scripts/run_ingestion.py
+```
+
+Expected additional output compared to ChromaDB mode:
+```
+Vector store: pgvector (PostgreSQL)
+Creating table and HNSW index if not exists...
+Ingested N new chunks from X files.
+Vector store now has TOTAL total chunks.
+```
+
+---
+
+### Step H — Restart the app
+
+```bash
+sudo systemctl restart siagent
+sudo journalctl -u siagent -n 30
+```
+
+Verify the admin panel shows the correct chunk count — same number as the ingestion output.
+
+---
+
+### EBS volume in pgvector mode
+
+With RDS handling the vector database, the EBS `/data` volume only needs to store:
+- `data/users.json` — user accounts
+- `data/feedback_log.jsonl` — user feedback
+- `data/security_log.jsonl` — login events
+
+The EBS volume can be reduced to **10 GB** (`data/chroma_db/` no longer exists there).
+EBS snapshots are still recommended for `users.json` and the log files.
+
+---
+
+### Backup in pgvector mode
+
+| What              | Location              | Frequency  | Method                           |
+|-------------------|-----------------------|------------|----------------------------------|
+| Source documents  | S3 bucket             | Automatic  | S3 versioning                    |
+| Vector index      | RDS (managed)         | Automatic  | RDS automated backups (7 days)   |
+| User accounts     | /data/users.json (EBS)| Daily      | EBS snapshot                     |
+| Logs              | /data/*.jsonl (EBS)   | Continuous | EBS snapshot                     |
+
+The vector database no longer needs manual snapshot management — RDS handles it.
+
+---
+
 ## Optional: AWS Bedrock instead of Anthropic API
 
 Bedrock keeps all traffic within AWS and removes the need for an Anthropic API key.
