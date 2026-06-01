@@ -9,7 +9,10 @@ Roles:
     user  — chat, persona selection, response rating and feedback
 """
 
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
@@ -24,6 +27,7 @@ from src.feedback import save_feedback, load_feedback, feedback_summary
 from src.security_log import log_event, load_security_log
 from src.rate_limiter import check_limit, record_question, get_all_usage_today, get_limit, reset_user_today
 from src.suggestions import is_not_found, generate_suggestions
+from src.kb_submissions import KB_SUBFOLDERS
 
 
 # ── Server-level cache — loaded ONCE, shared across all user sessions ─────────
@@ -403,8 +407,8 @@ if not prompt and "pending_suggestion" in st.session_state:
 
 # ── Tabs (admin) or plain container (user) ────────────────────────────────────
 if is_admin:
-    tab_chat, tab_users, tab_feedback, tab_security = st.tabs(
-        ["💬 Chat", "👥 User Management", "📊 Feedback Log", "🔒 Security Log"]
+    tab_chat, tab_users, tab_feedback, tab_security, tab_kb = st.tabs(
+        ["💬 Chat", "👥 User Management", "📊 Feedback Log", "🔒 Security Log", "📥 Ingestion"]
     )
 else:
     tab_chat = st.container()
@@ -513,7 +517,7 @@ def _render_suggestions(idx: int, suggestions: list[str]):
 with tab_chat:
 
     if is_admin and stats["total_chunks"] == 0:
-        st.warning("Knowledge base is empty. Run `python scripts/run_ingestion.py` first.")
+        st.warning("⚠️ Knowledge base is empty. Go to the **📥 Ingestion** tab to index your documents.")
 
     if not st.session_state.messages:
         if st.session_state.active_persona == "Select your role...":
@@ -736,6 +740,7 @@ if is_admin:
 # TAB 4 — SECURITY LOG (admin only)
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 if is_admin:
     with tab_security:
 
@@ -787,3 +792,128 @@ if is_admin:
                         st.caption(e["detail"])
                     if e.get("ip"):
                         st.caption(f"IP: {e['ip']}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — INGESTION (admin only)
+# ══════════════════════════════════════════════════════════════════════════════
+
+if is_admin:
+    with tab_kb:
+
+        st.subheader("📥 Run Knowledge Base Ingestion")
+        st.caption(
+            "Downloads new documents from S3 (or reads from data/raw/ in local mode) "
+            "and indexes them into the vector database. Already-indexed files are skipped "
+            "automatically — safe to run at any time."
+        )
+
+        st.divider()
+
+        # ── Options ───────────────────────────────────────────────────────────
+        col_folder, col_force = st.columns([2, 1])
+
+        with col_folder:
+            folder_options = ["All folders"] + KB_SUBFOLDERS
+            selected_folder = st.selectbox(
+                "Folder to ingest",
+                options=folder_options,
+                help="Choose a specific subfolder to ingest, or run all folders at once.",
+            )
+
+        with col_force:
+            st.write("")   # vertical alignment spacer
+            force_reindex = st.checkbox(
+                "Force re-index",
+                value=False,
+                help="Re-index all files even if already in the database. "
+                     "Use after replacing a document with an updated version.",
+            )
+
+        # ── Run button ────────────────────────────────────────────────────────
+        run_col, _ = st.columns([1, 2])
+        with run_col:
+            run_clicked = st.button(
+                "▶ Run Ingestion",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if run_clicked:
+            # Build command — same Python interpreter as the running app
+            _project_root = Path(__file__).parent
+            cmd = [sys.executable, "-X", "utf8",
+                   str(_project_root / "scripts" / "run_ingestion.py")]
+
+            if selected_folder != "All folders":
+                cmd += ["--folder", selected_folder]
+            if force_reindex:
+                cmd += ["--force"]
+
+            log_event(
+                "admin_action",
+                username=current_user["username"],
+                detail=f"ingestion started: folder={selected_folder} force={force_reindex}",
+            )
+
+            # Stream output line-by-line into the UI
+            with st.status("⏳ Ingestion running...", expanded=True) as _status:
+                _output_area = st.empty()
+                _output_text = ""
+
+                try:
+                    _env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+                    _proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        cwd=str(_project_root),
+                        env=_env,
+                    )
+
+                    for _line in iter(_proc.stdout.readline, b""):
+                        _output_text += _line.decode("utf-8", errors="replace")
+                        _output_area.code(_output_text, language="text")
+
+                    _proc.wait()
+
+                    if _proc.returncode == 0:
+                        _status.update(label="✅ Ingestion complete!", state="complete")
+                        log_event(
+                            "admin_action",
+                            username=current_user["username"],
+                            detail=f"ingestion finished successfully: folder={selected_folder}",
+                        )
+                        # Bust the KB stats cache so the sidebar reflects new counts
+                        get_stats.clear()
+                    else:
+                        _status.update(label="❌ Ingestion failed — see output above.", state="error")
+                        log_event(
+                            "admin_action",
+                            username=current_user["username"],
+                            detail=f"ingestion failed (exit {_proc.returncode}): folder={selected_folder}",
+                        )
+
+                except Exception as _exc:
+                    _status.update(label=f"❌ Error: {_exc}", state="error")
+
+        # ── Current KB stats (refreshes on each page load) ───────────────────
+        st.divider()
+        st.subheader("Current Knowledge Base")
+
+        _kb_stats = _store.stats()
+        _s1, _s2 = st.columns(2)
+        _s1.metric("Total indexed chunks", _kb_stats["total_chunks"])
+        _s2.metric("SSCP priority chunks", _kb_stats.get("sscp_chunks", 0))
+
+        if _kb_stats.get("by_domain"):
+            st.caption("**Chunks by domain folder**")
+            _domain_cols = st.columns(4)
+            for _i, (_dom, _cnt) in enumerate(sorted(_kb_stats["by_domain"].items())):
+                _domain_cols[_i % 4].metric(_dom, _cnt)
+
+        if _kb_stats["total_chunks"] == 0:
+            st.info(
+                "The knowledge base is empty. "
+                "Upload documents to S3 (or data/raw/ in local mode) then click **▶ Run Ingestion**."
+            )
