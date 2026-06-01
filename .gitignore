@@ -1,0 +1,61 @@
+# Secrets — never commit
+.env
+.env.local
+.env.production
+
+# Generated data — recreated by running ingestion on the server
+data/chroma_db/
+
+# URL list may contain internal/private links — keep it local
+data/urls.txt
+
+# User accounts and logs — never commit
+data/users.json
+data/feedback_log.jsonl
+data/security_log.jsonl
+
+# System prompt is editable per-deployment — don't overwrite with git pull
+# data/system_prompt.txt   ← commented out so the default ships with the repo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Claude Code IDE files
+.claude/
+
+# Eval reports — generated output, not source code
+reports/
+
+# Uploaded documents — not source code, too large for git
+# Rules below: ignore all files in data/raw/ except glossary.md,
+# allow subdirectories to be traversed, keep .gitkeep in each subfolder.
+data/raw/*
+!data/raw/glossary.md
+!data/raw/*/
+data/raw/*/*
+!data/raw/*/.gitkeep
+
+# Submission metadata — deployment-specific
+data/submissions.json
+
+# Daily usage tracking — deployment-specific
+data/daily_usage.json

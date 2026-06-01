@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SIAgent — Architecture</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f5f6fa;
+    padding: 40px 20px;
+    color: #1a1a2e;
+  }
+
+  h1 {
+    text-align: center;
+    font-size: 22px;
+    font-weight: 700;
+    color: #1a1a2e;
+    margin-bottom: 6px;
+    letter-spacing: -0.3px;
+  }
+
+  .subtitle {
+    text-align: center;
+    font-size: 13px;
+    color: #666;
+    margin-bottom: 36px;
+  }
+
+  .diagram {
+    max-width: 860px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  /* ── Arrow between layers ── */
+  .arrow {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 28px;
+    color: #aab;
+    font-size: 20px;
+  }
+
+  /* ── Layer card ── */
+  .layer {
+    border-radius: 14px;
+    padding: 18px 22px;
+    border: 1.5px solid transparent;
+  }
+
+  .layer-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+
+  .layer-sub {
+    font-size: 11.5px;
+    opacity: 0.7;
+    margin-bottom: 14px;
+    font-style: italic;
+  }
+
+  /* ── Chips row ── */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .chip {
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.3;
+    text-align: center;
+  }
+
+  .chip small {
+    display: block;
+    font-size: 10.5px;
+    font-weight: 400;
+    opacity: 0.75;
+    margin-top: 2px;
+  }
+
+  /* ── Pipeline row (horizontal flow) ── */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: wrap;
+  }
+
+  .pipe-chip {
+    border-radius: 8px;
+    padding: 8px 13px;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .pipe-arrow {
+    font-size: 16px;
+    padding: 0 4px;
+    opacity: 0.5;
+  }
+
+  /* ══ LAYER COLOURS ══════════════════════════════════════════════════ */
+
+  /* 1 — UI */
+  .l-ui { background: #e8f8f5; border-color: #1abc9c; }
+  .l-ui .layer-title { color: #0e8c6e; }
+  .l-ui .chip { background: #fff; border: 1.5px solid #1abc9c; color: #0e8c6e; }
+
+  /* 2 — Auth */
+  .l-auth { background: #f3f0ff; border-color: #7c5cbf; }
+  .l-auth .layer-title { color: #5b3fa6; }
+  .l-auth .chip { background: #fff; border: 1.5px solid #7c5cbf; color: #5b3fa6; }
+
+  /* 3 — RAG Pipeline */
+  .l-rag { background: #eaf4ff; border-color: #3b82f6; }
+  .l-rag .layer-title { color: #1d4ed8; }
+  .l-rag .pipe-chip { background: #fff; border: 1.5px solid #3b82f6; color: #1d4ed8; }
+
+  /* 4 — Knowledge Base */
+  .l-kb { background: #fff7ed; border-color: #f59e0b; }
+  .l-kb .layer-title { color: #b45309; }
+  .l-kb .chip { background: #fff; border: 1.5px solid #f59e0b; color: #92400e; }
+  .l-kb .chip.sscp { background: #fef3c7; border-color: #d97706; color: #92400e; font-weight: 700; }
+
+  /* 5 — LLM */
+  .l-llm { background: #fdf2f8; border-color: #c026d3; }
+  .l-llm .layer-title { color: #86198f; }
+  .l-llm .chip { background: #fff; border: 1.5px solid #c026d3; color: #86198f; }
+
+  /* 6 — Storage & Logging */
+  .l-store { background: #f1f5f9; border-color: #64748b; }
+  .l-store .layer-title { color: #334155; }
+  .l-store .chip { background: #fff; border: 1.5px solid #94a3b8; color: #334155; }
+
+  /* ── SSCP badge ── */
+  .sscp-badge {
+    display: inline-block;
+    background: #fef3c7;
+    border: 1.5px solid #d97706;
+    color: #92400e;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Two-column KB layout ── */
+  .kb-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .kb-col-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #b45309;
+    margin-bottom: 8px;
+  }
+
+  .kb-col-label.sscp-label {
+    color: #92400e;
+  }
+
+  .kb-col {
+    background: rgba(255,255,255,0.6);
+    border-radius: 10px;
+    padding: 12px;
+    border: 1px dashed #f59e0b;
+  }
+
+  .kb-col.sscp-col {
+    border: 1.5px solid #d97706;
+    background: #fef9ee;
+  }
+
+  /* ── Footer note ── */
+  .footer {
+    text-align: center;
+    font-size: 11.5px;
+    color: #888;
+    margin-top: 28px;
+  }
+
+  .legend {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    font-size: 11px;
+    color: #666;
+  }
+
+  .legend span::before {
+    content: "●";
+    margin-right: 4px;
+  }
+
+  .l-built::before { color: #1abc9c; }
+  .l-phase2::before { color: #cbd5e1; }
+</style>
+</head>
+<body>
+
+<h1>🏥 SI Assistant — Current Architecture</h1>
+<p class="subtitle">Standards &amp; Interoperability RAG Chatbot · Built May 2026</p>
+
+<div class="diagram">
+
+  <!-- ══ LAYER 1 — UI ══════════════════════════════════════════════════ -->
+  <div class="layer l-ui">
+    <div class="layer-title">🖥️ User Interface Layer</div>
+    <div class="layer-sub">Streamlit · single-user web browser access</div>
+    <div class="chips">
+      <div class="chip">Web Chat<small>Streaming responses</small></div>
+      <div class="chip">Persona Selector<small>Policy / Implementer / Clinician / Academia</small></div>
+      <div class="chip">Feedback<small>👍 👎 + comments</small></div>
+      <div class="chip">Admin Tabs<small>Users · Feedback · Security</small></div>
+      <div class="chip">Sources Expander<small>Per-response citations</small></div>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <!-- ══ LAYER 2 — AUTH ════════════════════════════════════════════════ -->
+  <div class="layer l-auth">
+    <div class="layer-title">🔐 Authentication &amp; Access Control</div>
+    <div class="layer-sub">OWASP-hardened · role-based · session-scoped</div>
+    <div class="chips">
+      <div class="chip">Login Gate<small>PBKDF2-SHA256 + salt</small></div>
+      <div class="chip">Roles: Admin / User<small>Server-side enforcement</small></div>
+      <div class="chip">Brute Force Lockout<small>5 attempts → 5 min lock</small></div>
+      <div class="chip">Security Log<small>Failed logins · admin actions</small></div>
+      <div class="chip">User Management<small>Add · delete · change password</small></div>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <!-- ══ LAYER 3 — RAG PIPELINE ════════════════════════════════════════ -->
+  <div class="layer l-rag">
+    <div class="layer-title">🔄 RAG Pipeline</div>
+    <div class="layer-sub">Retrieval-Augmented Generation · every answer grounded in documents</div>
+    <div class="pipeline">
+      <div class="pipe-chip">Query<small>+ last 2 turns blended</small></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-chip">Synonym Expansion<small>synonyms.json</small></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-chip">Embed<small>all-MiniLM-L6-v2<br>runs locally</small></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-chip">Priority Retrieve<small>SSCP first · then KB</small></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-chip">Stream Generate<small>token-by-token</small></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-chip">Not Found?<small>detect phrase</small></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-chip">Suggestions<small>4 alternatives · LLM</small></div>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <!-- ══ LAYER 4 — KNOWLEDGE BASE ═════════════════════════════════════ -->
+  <div class="layer l-kb">
+    <div class="layer-title">📚 Knowledge Base</div>
+    <div class="layer-sub">Ingested · chunked · embedded · stored in ChromaDB · metadata tagged</div>
+    <div class="kb-cols">
+
+      <div class="kb-col sscp-col">
+        <div class="kb-col-label sscp-label">⭐ SSCP Priority Sources <span class="sscp-badge">PRIORITY</span></div>
+        <div class="chips">
+          <div class="chip sscp">Field Learnings<small>data/raw/sscp/</small></div>
+          <div class="chip sscp">Country Assessments</div>
+          <div class="chip sscp">Lessons Learned</div>
+          <div class="chip sscp">Implementation Notes</div>
+        </div>
+      </div>
+
+      <div class="kb-col">
+        <div class="kb-col-label">General Knowledge Base</div>
+        <div class="chips">
+          <div class="chip">Standards Docs<small>HL7 · FHIR · IHE · ICD</small></div>
+          <div class="chip">WHO Guidelines<small>DHIS2 · OpenHIE · SMART</small></div>
+          <div class="chip">Policy Docs<small>Country strategies</small></div>
+          <div class="chip">Case Studies<small>Implementation reports</small></div>
+          <div class="chip">Web Pages<small>Fetched from urls.txt</small></div>
+          <div class="chip">Domain Glossary<small>80+ terms · synonyms</small></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <!-- ══ LAYER 5 — LLM ════════════════════════════════════════════════ -->
+  <div class="layer l-llm">
+    <div class="layer-title">🧠 LLM Layer</div>
+    <div class="layer-sub">LiteLLM unified interface · swap provider with one env var</div>
+    <div class="chips">
+      <div class="chip">Claude Sonnet 4.6<small>Default · Anthropic API</small></div>
+      <div class="chip">System Prompt<small>Editable in UI · file-backed</small></div>
+      <div class="chip">Persona Instructions<small>Role-tailored context</small></div>
+      <div class="chip">SSCP Priority Rules<small>Prefer project learnings</small></div>
+      <div class="chip">Session Memory<small>Last N turns in context</small></div>
+      <div class="chip">Swap-ready<small>OpenAI · Ollama · Bedrock</small></div>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <!-- ══ LAYER 6 — STORAGE & OPS ══════════════════════════════════════ -->
+  <div class="layer l-store">
+    <div class="layer-title">💾 Storage &amp; Logging</div>
+    <div class="layer-sub">All local by default · S3-ready for cloud deployment</div>
+    <div class="chips">
+      <div class="chip">ChromaDB<small>Vector store · local folder</small></div>
+      <div class="chip">Local / S3<small>Source documents</small></div>
+      <div class="chip">users.json<small>Hashed passwords · roles</small></div>
+      <div class="chip">feedback_log.jsonl<small>Ratings · comments</small></div>
+      <div class="chip">security_log.jsonl<small>Auth events · admin actions</small></div>
+      <div class="chip">system_prompt.txt<small>Agent instructions</small></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Footer ── -->
+<div class="footer">
+  <div>Built with Streamlit · LiteLLM · ChromaDB · sentence-transformers · Python</div>
+  <div class="legend">
+    <span class="l-built">All layers fully built and deployed</span>
+    <span>Phase 2 candidates: hybrid search · reranking · multi-channel · long-term memory</span>
+  </div>
+</div>
+
+</body>
+</html>

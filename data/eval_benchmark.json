@@ -1,0 +1,167 @@
+{
+  "_comment": "Benchmark question set derived from user survey (AI Tool Survey Results.xlsx). Used by scripts/run_eval.py for automated RAG quality evaluation.",
+  "version": "1.0",
+  "questions": [
+    {
+      "id": "Q01",
+      "category": "Data Privacy & Compliance",
+      "complexity": "moderate",
+      "question": "How can we ensure our data-sharing practices for public health reporting are fully compliant with a country's Personal Data Protection Law while implementing FHIR standards?",
+      "expected_topics": ["data protection", "privacy", "FHIR", "consent", "governance", "legislation", "de-identification"]
+    },
+    {
+      "id": "Q02",
+      "category": "Legacy System Migration",
+      "complexity": "complex",
+      "question": "Based on a hospital with a legacy, non-standard Hospital Information System (HIS), what is a realistic implementation roadmap to achieve foundational interoperability with other providers?",
+      "expected_topics": ["legacy", "HIS", "interoperability", "roadmap", "phased", "standards", "migration"]
+    },
+    {
+      "id": "Q03",
+      "category": "AI Governance",
+      "complexity": "moderate",
+      "question": "How to manage health AI-generated information that may be risky, false, or misleading, alongside laws for data protection and confidentiality for individuals and organisations?",
+      "expected_topics": ["AI", "governance", "data protection", "confidentiality", "risk", "policy"]
+    },
+    {
+      "id": "Q04",
+      "category": "FHIR Implementation",
+      "complexity": "simple",
+      "question": "How can AI support the development and authoring of FHIR Implementation Guides?",
+      "expected_topics": ["FHIR", "implementation guide", "IG", "authoring", "profiling", "StructureDefinition"]
+    },
+    {
+      "id": "Q05",
+      "category": "Terminology Standards",
+      "complexity": "moderate",
+      "question": "How can the SI Assistant support the adoption of terminologies including mappings with local codes?",
+      "expected_topics": ["terminology", "SNOMED", "ICD", "LOINC", "mapping", "local codes", "concept map"]
+    },
+    {
+      "id": "Q06",
+      "category": "Resource-Constrained Settings",
+      "complexity": "moderate",
+      "question": "What are the minimum data standards and system requirements needed to implement FHIR-based interoperability in a resource-constrained environment?",
+      "expected_topics": ["FHIR", "resource-constrained", "minimum", "requirements", "LMIC", "low resource", "connectivity"]
+    },
+    {
+      "id": "Q07",
+      "category": "Terminology Mapping",
+      "complexity": "moderate",
+      "question": "Can you help map existing health indicators and data elements to international standards like ICD-11 or LOINC?",
+      "expected_topics": ["ICD-11", "LOINC", "mapping", "indicators", "data elements", "terminology", "crosswalk"]
+    },
+    {
+      "id": "Q08",
+      "category": "Hybrid Record Systems",
+      "complexity": "moderate",
+      "question": "How can we design an interoperable digital health system that works with both paper-based and electronic records during a health system transition phase?",
+      "expected_topics": ["paper", "electronic", "hybrid", "transition", "interoperability", "records", "digitisation"]
+    },
+    {
+      "id": "Q09",
+      "category": "HIE Governance",
+      "complexity": "complex",
+      "question": "What are the key governance and policy considerations we need to address before launching a national health information exchange?",
+      "expected_topics": ["HIE", "governance", "policy", "stakeholder", "legislation", "trust framework", "data sharing"]
+    },
+    {
+      "id": "Q10",
+      "category": "Systems Integration",
+      "complexity": "complex",
+      "question": "Can you help draft a phased implementation plan for integrating DHIS2, EMRs, and national registries?",
+      "expected_topics": ["DHIS2", "EMR", "registry", "integration", "phased", "plan", "interoperability"]
+    },
+    {
+      "id": "Q11",
+      "category": "FHIR Implementation Guides",
+      "complexity": "simple",
+      "question": "Are there existing FHIR implementation guides for maternal and child health?",
+      "expected_topics": ["FHIR", "implementation guide", "IG", "maternal", "child health", "WHO", "SMART"]
+    },
+    {
+      "id": "Q12",
+      "category": "FHIR Implementation Guides",
+      "complexity": "complex",
+      "question": "What guidance exists for creating a FHIR Implementation Guide for a national immunisation registry?",
+      "expected_topics": ["FHIR", "implementation guide", "immunisation", "registry", "profiling", "IHE", "HL7"]
+    },
+    {
+      "id": "Q13",
+      "category": "Interoperability Architecture",
+      "complexity": "moderate",
+      "question": "What are the key components of an interoperability architecture aligned with global digital health frameworks?",
+      "expected_topics": ["architecture", "OpenHIE", "interoperability", "components", "HIE", "standards", "global"]
+    },
+    {
+      "id": "Q14",
+      "category": "Readiness Assessment",
+      "complexity": "moderate",
+      "question": "How can we assess whether our national digital health infrastructure is ready for standards-based data exchange?",
+      "expected_topics": ["assessment", "readiness", "maturity", "infrastructure", "standards", "exchange", "capacity"]
+    },
+    {
+      "id": "Q15",
+      "category": "FHIR Adoption",
+      "complexity": "complex",
+      "question": "What steps should we take to adopt FHIR as a national standard across multiple health systems?",
+      "expected_topics": ["FHIR", "national", "adoption", "steps", "roadmap", "governance", "implementation"]
+    },
+    {
+      "id": "Q16",
+      "category": "Standards Selection",
+      "complexity": "moderate",
+      "question": "Can you guide us in selecting which interoperability standards such as HL7, FHIR, or IHE to use for different health data flows?",
+      "expected_topics": ["HL7", "FHIR", "IHE", "standards", "selection", "use case", "data flows"]
+    },
+    {
+      "id": "Q17",
+      "category": "Enterprise Architecture",
+      "complexity": "complex",
+      "question": "How can we align our existing health IT systems with the national enterprise architecture for digital health?",
+      "expected_topics": ["enterprise architecture", "alignment", "national", "digital health", "systems", "strategy"]
+    },
+    {
+      "id": "Q18",
+      "category": "CRVS Integration",
+      "complexity": "complex",
+      "question": "What is the best approach to integrate civil registration and vital statistics (CRVS) systems with national health data platforms using FHIR?",
+      "expected_topics": ["CRVS", "civil registration", "vital statistics", "FHIR", "integration", "national"]
+    },
+    {
+      "id": "Q19",
+      "category": "Federated Standards Adoption",
+      "complexity": "moderate",
+      "question": "How do we ensure consistency and compliance when different regions or partners adopt FHIR at different paces?",
+      "expected_topics": ["consistency", "compliance", "FHIR", "federated", "governance", "versioning", "coordination"]
+    },
+    {
+      "id": "Q20",
+      "category": "Reference Architecture",
+      "complexity": "complex",
+      "question": "Can you recommend a reference architecture for implementing a national health information exchange in a low-resource setting?",
+      "expected_topics": ["reference architecture", "HIE", "low resource", "national", "OpenHIE", "components"]
+    },
+    {
+      "id": "Q21",
+      "category": "Governance Structures",
+      "complexity": "moderate",
+      "question": "What governance structures are needed to support long-term maintenance of interoperability standards and infrastructure?",
+      "expected_topics": ["governance", "maintenance", "interoperability", "standards", "long-term", "committee", "stewardship"]
+    },
+    {
+      "id": "Q22",
+      "category": "Maturity Assessment",
+      "complexity": "moderate",
+      "question": "Can you help evaluate a country's current interoperability maturity level and suggest next steps?",
+      "expected_topics": ["maturity", "assessment", "interoperability", "evaluation", "next steps", "framework", "capacity"]
+    },
+    {
+      "id": "Q23",
+      "category": "Pacific / LMIC Context",
+      "complexity": "moderate",
+      "question": "What are specific considerations for implementing digital health interoperability standards in Pacific Island countries or other small island developing states?",
+      "expected_topics": ["Pacific", "LMIC", "small island", "constraints", "connectivity", "capacity", "standards adaptation"]
+    }
+  ]
+}

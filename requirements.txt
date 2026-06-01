@@ -1,0 +1,25 @@
+# ── Core AI / RAG ─────────────────────────────────────────────────
+litellm>=1.40.0                # Unified LLM interface (Claude, OpenAI, Ollama, Bedrock, etc.)
+anthropic>=0.25.0              # Required when LLM_MODEL=anthropic/...
+sentence-transformers>=2.7.0   # Local multilingual embeddings (free, no API key)
+chromadb>=0.5.0                # Local vector database
+
+# ── Web UI ────────────────────────────────────────────────────────
+streamlit>=1.35.0              # Chat interface (run: streamlit run app.py)
+
+# ── Document loading ──────────────────────────────────────────────
+pypdf>=4.0.0                   # PDF parsing
+python-docx>=1.1.0             # Word document parsing
+
+# ── Text processing ───────────────────────────────────────────────
+langchain-text-splitters>=0.2.0  # Smart document chunking
+tiktoken>=0.7.0                  # Token counting
+
+# ── Utilities ─────────────────────────────────────────────────────
+python-dotenv>=1.0.0           # Load .env file
+rich>=13.0.0                   # Pretty terminal output
+tqdm>=4.66.0                   # Progress bars
+pydantic>=2.0.0                # Data validation
+
+# ── Cloud / AWS (optional — only needed for STORAGE_BACKEND=s3) ───
+boto3>=1.34.0                  # AWS S3 client

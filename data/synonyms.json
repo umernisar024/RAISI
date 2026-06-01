@@ -1,0 +1,70 @@
+{
+  "_comment": "Synonym expansion for query-time retrieval. Each key is a term to detect in the user query. The array lists equivalent terms to append to the search. Edit freely — no code changes needed.",
+
+  "HIE": ["Health Information Exchange", "interoperability layer", "health data exchange", "DPI-H"],
+  "Health Information Exchange": ["HIE", "interoperability layer", "health data exchange", "DPI-H"],
+  "DPI-H": ["HIE", "Health Information Exchange", "Digital Public Infrastructure for Health", "interoperability layer"],
+  "Digital Public Infrastructure": ["DPI", "DPI-H", "HIE", "health information exchange"],
+
+  "ILR": ["Client Registry", "Master Patient Index", "MPI", "patient identity", "unique patient identifier"],
+  "Client Registry": ["ILR", "MPI", "Master Patient Index", "patient identity management"],
+  "Master Patient Index": ["MPI", "Client Registry", "ILR", "patient registry"],
+  "MPI": ["Master Patient Index", "Client Registry", "ILR"],
+
+  "SHR": ["Shared Health Record", "longitudinal health record", "clinical data repository", "health information repository"],
+  "Shared Health Record": ["SHR", "longitudinal health record", "clinical data repository"],
+  "Longitudinal Health Record": ["SHR", "Shared Health Record", "clinical data repository"],
+
+  "OpenHIE": ["Open Health Information Exchange", "HIE reference architecture", "health information mediator", "interoperability architecture"],
+
+  "FHIR IG": ["Implementation Guide", "FHIR profile", "FHIR specification", "implementation specification"],
+  "Implementation Guide": ["FHIR IG", "IG", "FHIR profile", "FHIR specification"],
+
+  "EMR": ["Electronic Medical Record", "EHR", "Electronic Health Record", "clinical information system"],
+  "EHR": ["Electronic Health Record", "EMR", "Electronic Medical Record", "clinical information system"],
+  "Electronic Medical Record": ["EMR", "EHR", "Electronic Health Record"],
+  "Electronic Health Record": ["EHR", "EMR", "Electronic Medical Record"],
+
+  "HMIS": ["Health Management Information System", "health information system", "DHIS2", "aggregate data system"],
+  "Health Management Information System": ["HMIS", "health information system", "DHIS2"],
+  "DHIS2": ["District Health Information Software", "HMIS", "Health Management Information System"],
+
+  "LMIS": ["Logistics Management Information System", "supply chain management system", "supply chain"],
+  "Supply Chain": ["LMIS", "Logistics Management Information System", "supply chain management"],
+
+  "SNOMED": ["SNOMED CT", "clinical terminology", "clinical nomenclature"],
+  "SNOMED CT": ["SNOMED", "Systematized Nomenclature of Medicine", "clinical terminology"],
+  "LOINC": ["Logical Observation Identifiers Names and Codes", "lab codes", "clinical observation codes"],
+  "ICD": ["International Classification of Diseases", "ICD-10", "ICD-11", "disease classification"],
+  "ICD-10": ["ICD", "International Classification of Diseases", "disease classification"],
+  "ICD-11": ["ICD", "International Classification of Diseases", "disease classification"],
+
+  "CRVS": ["Civil Registration", "Vital Statistics", "birth registration", "death registration"],
+  "Civil Registration": ["CRVS", "Civil Registration and Vital Statistics", "birth registration", "death registration"],
+
+  "Facility Registry": ["health facility registry", "facility directory", "facility management information system"],
+  "Health Worker Registry": ["provider registry", "human resource information system", "HRIS"],
+
+  "Telehealth": ["telemedicine", "teleconsultation", "virtual health", "remote consultation"],
+  "Telemedicine": ["telehealth", "teleconsultation", "virtual health", "remote consultation"],
+
+  "CDS": ["Clinical Decision Support", "decision support system", "clinical alerts"],
+  "Clinical Decision Support": ["CDS", "decision support", "clinical alerts", "clinical guidelines system"],
+
+  "PHR": ["Personal Health Record", "patient portal", "patient-held record"],
+  "Personal Health Record": ["PHR", "patient portal", "patient-held record"],
+
+  "PACS": ["Picture Archiving", "radiology information system", "medical imaging system"],
+  "LIMS": ["Laboratory Information Management System", "lab system", "laboratory system"],
+
+  "Interoperability": ["data exchange", "health data exchange", "system integration", "HIE", "FHIR"],
+  "Semantic Interoperability": ["terminology mapping", "coded data exchange", "SNOMED", "LOINC", "ICD mapping"],
+  "Technical Interoperability": ["FHIR", "HL7", "API", "data standards", "messaging standards"],
+
+  "HL7": ["Health Level Seven", "FHIR", "health informatics standards"],
+  "FHIR": ["Fast Healthcare Interoperability Resources", "HL7 FHIR", "FHIR R4", "FHIR R5", "health API"],
+
+  "Capacity Building": ["training", "workforce development", "professional development", "competency building"],
+  "Assessment": ["evaluation", "maturity assessment", "readiness assessment", "capability assessment"],
+  "Implementation": ["deployment", "rollout", "adoption", "go-live"]
+}
