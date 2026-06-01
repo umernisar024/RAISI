@@ -141,25 +141,27 @@ st.set_page_config(
 )
 
 # ── Layout CSS ────────────────────────────────────────────────────────────────
-# Hide the multipage sidebar nav (page list) and the entire sidebar
-# until the user has logged in — blank white screen before login.
-# After login the sidebar is restored by normal Streamlit rendering.
-_logged_in = st.session_state.get("logged_in", False)
-
-st.markdown(f"""
+# Always inject the bottom-padding fix for the sticky chat input.
+st.markdown("""
 <style>
-/* Always add bottom padding so last message clears the sticky chat input */
-section.main > div.block-container {{
+section.main > div.block-container {
     padding-bottom: 90px !important;
-}}
-{"" if _logged_in else """
-/* Hide sidebar and page-nav list before login */
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Hide the multipage sidebar nav and the entire sidebar until the user has
+# logged in — blank white screen before login.  Kept as a SEPARATE markdown
+# call (not embedded in an f-string) so curly braces in the CSS are literal
+# and not misinterpreted as f-string escape sequences.
+if not st.session_state.get("logged_in", False):
+    st.markdown("""
+<style>
 [data-testid="stSidebarNav"],
 [data-testid="stSidebar"],
-section[data-testid="stSidebar"] {{
+section[data-testid="stSidebar"] {
     display: none !important;
-}}
-"""}
+}
 </style>
 """, unsafe_allow_html=True)
 
