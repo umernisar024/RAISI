@@ -4,6 +4,7 @@ pages/2_KB_Review.py — Review submitted documents before KB indexing.
 Accessible to: admin, reviewer
 """
 
+import os
 import sys
 from pathlib import Path
 import streamlit as st
@@ -11,6 +12,8 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
+
+APP_NAME = os.getenv("APP_NAME", "SI Assistant")
 
 from src.page_auth import require_login, is_reviewer_or_admin
 from src.kb_submissions import (
@@ -23,7 +26,7 @@ from src.security_log import log_event
 # ── Auth check ────────────────────────────────────────────────────────────────
 current_user = require_login(allowed_roles=["admin", "reviewer"])
 
-st.set_page_config(page_title="KB Review — SI Assistant", page_icon="🔍")
+st.set_page_config(page_title=f"KB Review — {APP_NAME}", page_icon="🔍")
 
 st.title("🔍 Knowledge Base Review")
 st.caption(
@@ -235,4 +238,4 @@ with tab_all:
                 _render_file_download(record)
 
 st.divider()
-st.page_link("app.py", label="← Back to chat", icon="💬")
+st.page_link("app.py", label=f"← Back to {APP_NAME}", icon="💬")

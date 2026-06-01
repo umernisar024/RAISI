@@ -15,6 +15,9 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
 
+APP_NAME = os.getenv("APP_NAME", "SI Assistant")
+APP_ICON = os.getenv("APP_ICON", "🏥")
+
 from src.page_auth import require_login
 from src.kb_submissions import (
     KB_SUBFOLDERS, KB_FOLDER_LABELS, SUPPORTED_UPLOAD_TYPES,
@@ -51,7 +54,7 @@ def _validate_url(url: str) -> bool:
 # ── Auth check ────────────────────────────────────────────────────────────────
 current_user = require_login()  # any logged-in user may submit
 
-st.set_page_config(page_title="Suggest a Document — SI Assistant", page_icon="📄")
+st.set_page_config(page_title=f"Suggest a Document — {APP_NAME}", page_icon="📄")
 
 st.title("📄 Suggest a Document")
 st.caption(
@@ -175,4 +178,4 @@ if submitted:
         )
 
 st.divider()
-st.page_link("app.py", label="← Back to chat", icon="💬")
+st.page_link("app.py", label=f"← Back to {APP_NAME}", icon="💬")

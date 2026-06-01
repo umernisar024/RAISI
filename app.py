@@ -19,6 +19,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── Configurable branding ─────────────────────────────────────────────────────
+# Set these in .env to rebrand the UI without touching any code.
+# APP_NAME     — shown in the browser tab, login page, and chat header
+# APP_SUBTITLE — shown on the login page below the name
+# APP_ICON     — emoji used in the browser tab and page headers
+APP_NAME     = os.getenv("APP_NAME",     "SI Assistant")
+APP_SUBTITLE = os.getenv("APP_SUBTITLE", "Digital Health Standards & Interoperability Assistant")
+APP_ICON     = os.getenv("APP_ICON",     "🏥")
+
 from src.chat import RAGChat, load_system_prompt, DEFAULT_SYSTEM_PROMPT_PATH
 from src.embedder import Embedder
 from src.store import VectorStore
@@ -124,8 +133,8 @@ def plain_text(text: str) -> str:
 # ── Page config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="SI Assistant",
-    page_icon="🏥",
+    page_title=APP_NAME,
+    page_icon=APP_ICON,
     layout="wide",
 )
 
@@ -160,8 +169,8 @@ def show_login():
     st.markdown("<br><br>", unsafe_allow_html=True)
     _, col, _ = st.columns([1, 1.2, 1])
     with col:
-        st.markdown("## 🏥 SI Assistant")
-        st.markdown("##### Digital Health Standards & Interoperability Assistant")
+        st.markdown(f"## {APP_ICON} {APP_NAME}")
+        st.markdown(f"##### {APP_SUBTITLE}")
         st.divider()
 
         # Check lockout
@@ -407,7 +416,7 @@ st.session_state.rag.n_results = n_results
 # ══════════════════════════════════════════════════════════════════════════════
 
 persona = PERSONAS.get(st.session_state.active_persona, {})
-st.title("🏥 SI Assistant")
+st.title(f"{APP_ICON} {APP_NAME}")
 
 if persona.get("description"):
     st.caption(
