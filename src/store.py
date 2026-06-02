@@ -233,20 +233,36 @@ class VectorStore:
         return results[:n_results]
 
     def stats(self) -> dict:
-        """Return basic stats about the knowledge base."""
+        """
+        Return KB statistics.
+
+        Optimised to minimise ChromaDB I/O:
+          - total_chunks : collection.count()  — O(1), no data transfer
+          - sscp_chunks  : id-only filtered get — transfers only IDs, not documents
+          - by_domain / by_language : single full-metadata pass (unavoidable for
+            aggregation, but done at most once per cache window)
+        """
+        # ── Fast counts (no document/metadata transfer) ───────────────────────
         total = self.collection.count()
 
-        all_meta = self.collection.get(include=["metadatas"])["metadatas"]
-        domains = {}
-        languages = {}
-        sscp_count = 0
-        for m in all_meta:
-            d = m.get("domain", "unknown")
-            l = m.get("language", "unknown")
-            domains[d] = domains.get(d, 0) + 1
-            languages[l] = languages.get(l, 0) + 1
-            if m.get("sscp") == "true":
-                sscp_count += 1
+        try:
+            # include=[] means IDs only — much smaller payload than include=["metadatas"]
+            sscp_ids = self.collection.get(where={"sscp": "true"}, include=[])["ids"]
+            sscp_count = len(sscp_ids)
+        except Exception:
+            sscp_count = 0
+
+        # ── Domain / language breakdown (full metadata scan — cached by caller) ─
+        domains: dict[str, int] = {}
+        languages: dict[str, int] = {}
+
+        if total > 0:
+            all_meta = self.collection.get(include=["metadatas"])["metadatas"]
+            for m in all_meta:
+                d = m.get("domain", "unknown")
+                lg = m.get("language", "unknown")
+                domains[d] = domains.get(d, 0) + 1
+                languages[lg] = languages.get(lg, 0) + 1
 
         return {
             "total_chunks": total,

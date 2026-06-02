@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import time as _time          # module-level so every rerun avoids the lookup overhead
 from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
@@ -51,6 +52,26 @@ def load_shared_resources():
     embedder = Embedder()
     store = VectorStore()
     return embedder, store
+
+
+# ── Pre-warm shared resources at server start ─────────────────────────────────
+# @st.cache_resource is lazy by default — without this call the 90 MB embedding
+# model loads on the FIRST user request (4-5 second freeze).  Calling it here
+# at module level means the server warms the model as soon as Streamlit starts,
+# so the first real user sees a fast login page.
+load_shared_resources()
+
+
+# ── Cached KB stats (module-level so the cache key is stable across reruns) ───
+# Moving this out of _main_page() fixes a subtle issue: when defined inside a
+# function, @st.cache_data re-hashes the code on every call.  At module level
+# the hash is computed once at import time.  TTL=300 s (5 min) instead of 60 s
+# because KB contents change only when ingestion runs (which clears the cache).
+@st.cache_data(ttl=300)
+def get_stats() -> dict:
+    """Return KB statistics — full metadata scan, cached for 5 minutes."""
+    _, store = load_shared_resources()
+    return store.stats()
 
 
 # ── Persona definitions ───────────────────────────────────────────────────────
@@ -198,8 +219,7 @@ def _main_page():
             st.divider()
 
             # Check lockout
-            import time
-            now = time.time()
+            now = _time.time()
             if st.session_state.lockout_until and now < st.session_state.lockout_until:
                 remaining = int(st.session_state.lockout_until - now)
                 st.error(f"Too many failed attempts. Please wait {remaining} seconds before trying again.")
@@ -233,7 +253,7 @@ def _main_page():
                     )
                     remaining_attempts = _MAX_LOGIN_ATTEMPTS - st.session_state.login_attempts
                     if st.session_state.login_attempts >= _MAX_LOGIN_ATTEMPTS:
-                        st.session_state.lockout_until = time.time() + _LOCKOUT_SECONDS
+                        st.session_state.lockout_until = _time.time() + _LOCKOUT_SECONDS
                         log_event("account_locked", username=username.strip(),
                                   detail=f"locked for {_LOCKOUT_SECONDS}s after {_MAX_LOGIN_ATTEMPTS} failures")
                         st.error("Too many failed attempts. Account locked for 5 minutes.")
@@ -252,7 +272,6 @@ def _main_page():
     # Auto-logout after SESSION_TIMEOUT_MINUTES of inactivity (default 120 min).
     # last_activity is updated on every page render, so any interaction resets
     # the timer.  A stale open browser tab is logged out on its next refresh.
-    import time as _time
     _SESSION_TIMEOUT_SECS = int(os.getenv("SESSION_TIMEOUT_MINUTES", "120")) * 60
     _now = _time.time()
 
@@ -356,13 +375,8 @@ def _main_page():
 
             st.divider()
 
-            # KB stats
+            # KB stats (uses module-level get_stats — cached 5 min, warmed at server start)
             st.subheader("📚 Knowledge Base")
-
-            @st.cache_data(ttl=60)
-            def get_stats():
-                return _store.stats()
-
             stats = get_stats()
             col_a, col_b = st.columns(2)
             col_a.metric("Indexed chunks", stats["total_chunks"])
@@ -1052,7 +1066,7 @@ def _main_page():
             st.divider()
             st.subheader("Current Knowledge Base")
 
-            _kb_stats = _store.stats()
+            _kb_stats = get_stats()   # use module-level cached version
             _s1, _s2 = st.columns(2)
             _s1.metric("Total indexed chunks", _kb_stats["total_chunks"])
             _s2.metric("SSCP priority chunks", _kb_stats.get("sscp_chunks", 0))
