@@ -462,18 +462,6 @@ def _main_page():
             f"— {persona['description']}"
         )
 
-    # ── Chat input — at PAGE LEVEL so Streamlit keeps it fixed at the bottom ─────
-    # Must be defined BEFORE tabs so it stays sticky regardless of tab content.
-
-    prompt = st.chat_input("Ask a question ...")
-
-    # ── Intercept a suggestion the user clicked in the previous rerun ─────────────
-    # When a suggestion button is clicked, it sets pending_suggestion in session
-    # state and reruns. We pick it up here so it flows through the same handler
-    # as a typed prompt, including rate-limit checks and history recording.
-    if not prompt and "pending_suggestion" in st.session_state:
-        prompt = st.session_state.pop("pending_suggestion")
-
     # ── Tabs (admin) or plain container (user) ────────────────────────────────────
     if is_admin:
         tab_chat, tab_users, tab_feedback, tab_security, tab_kb = st.tabs(
@@ -596,6 +584,15 @@ def _main_page():
 
     with tab_chat:
 
+        # ── Chat input — inside the Chat tab so it only appears here ─────────────
+        # Streamlit 1.36+ keeps st.chat_input sticky at the bottom even when
+        # placed inside a tab, so there is no UX loss vs. the old page-level placement.
+        prompt = st.chat_input("Ask a question ...")
+
+        # ── Intercept a suggestion the user clicked in the previous rerun ────────
+        if not prompt and "pending_suggestion" in st.session_state:
+            prompt = st.session_state.pop("pending_suggestion")
+
         if is_admin and stats["total_chunks"] == 0:
             st.warning("⚠️ Knowledge base is empty. Go to the **📥 Ingestion** tab to index your documents.")
 
@@ -636,7 +633,7 @@ def _main_page():
                     if msg.get("suggestions") and idx == last_idx:
                         _render_suggestions(idx, msg["suggestions"])
 
-        # ── Handle new prompt (received from the page-level chat_input above) ─────
+        # ── Handle new prompt ────────────────────────────────────────────────────────
         if prompt:
             # A03 — input validation
             if len(prompt) > 2000:
