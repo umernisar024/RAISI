@@ -1,0 +1,13 @@
+[browser]
+# Disable the usage-stats ping that Streamlit sends on startup
+gatherUsageStats = false
+
+[client]
+# "minimal" hides the hamburger menu, toolbar buttons, and "Made with Streamlit" footer.
+# Use "viewer" if you want to keep the fullscreen button but hide dev tools.
+# Use "developer" (default) to restore everything (useful when debugging locally).
+toolbarMode = "minimal"
+
+[server]
+# Recommended for production — suppresses the "click here to go to network URL" banner
+headless = true
