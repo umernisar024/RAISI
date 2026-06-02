@@ -1082,26 +1082,33 @@ def _main_page():
 
 
 # ── Navigation (Streamlit 1.36+) ──────────────────────────────────────────────
-# Calling st.navigation() overrides Streamlit's automatic pages/ discovery so
-# we control exactly which links appear in the sidebar.
-# - position="hidden" before login  → no sidebar nav visible (blank login page)
-# - After login → full page list shown in sidebar
-# pg.run() calls _main_page() which handles login OR the full chat/admin UI
-# depending on session state, so there is no recursion.
+# Register "app.py" as the main page (file-path form, not function) so that
+# st.page_link("app.py", ...) and st.switch_page("app.py") in sub-pages resolve
+# correctly.  We never call _pg.run() for the main page — app.py is already
+# executing; calling pg.run() for the entrypoint would be recursive.
+# Instead we branch on url_path: "" (falsy) = main/default page, non-empty =
+# a sub-page, in which case we let pg.run() execute it and stop.
 _logged_in = st.session_state.get("logged_in", False)
 
 if _logged_in:
     _pg = st.navigation(
         [
-            st.Page(_main_page, title=f"{APP_ICON} {APP_NAME}", default=True),
-            st.Page("pages/1_Suggest_Document.py", title="📄 Suggest Document"),
-            st.Page("pages/2_KB_Review.py",        title="🔍 KB Review"),
+            st.Page("app.py",                       title=f"{APP_ICON} {APP_NAME}", default=True),
+            st.Page("pages/1_Suggest_Document.py",  title="📄 Suggest Document"),
+            st.Page("pages/2_KB_Review.py",         title="🔍 KB Review"),
         ]
     )
 else:
     _pg = st.navigation(
-        [st.Page(_main_page, title=APP_NAME, default=True)],
+        [st.Page("app.py", title=APP_NAME, default=True)],
         position="hidden",
     )
 
-_pg.run()
+if _pg.url_path:
+    # A sub-page is active — execute it and stop; don't render main page content.
+    _pg.run()
+else:
+    # Main page (default, url_path="") — run our content function directly.
+    # pg.run() is intentionally NOT called here; it would re-execute app.py
+    # recursively since app.py IS the entrypoint.
+    _main_page()
