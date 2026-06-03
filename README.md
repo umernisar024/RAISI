@@ -1,6 +1,6 @@
-# SIAgent — Standards & Interoperability RAG Assistant
+# RAISI — Responsible AI for Standards & Interoperability
 
-A conversational AI assistant that answers questions grounded in your own document library. Built for digital health teams who need reliable, citation-backed guidance on standards, interoperability frameworks, and implementation practice — without hallucination.
+A conversational AI RAG Assistant that answers questions grounded in a curated document library. Built for digital health teams who need reliable, citation-backed guidance on standards, interoperability frameworks, and implementation practice — without hallucination.
 
 ---
 
