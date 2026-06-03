@@ -59,3 +59,13 @@ data/submissions.json
 
 # Daily usage tracking — deployment-specific
 data/daily_usage.json
+
+# Node / JS tooling (used locally for ADR Word doc generation, not part of app)
+node_modules/
+package.json
+package-lock.json
+
+# Local JS scripts and generated files
+*.js
+architecture.html
+*.docx
