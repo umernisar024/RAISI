@@ -107,6 +107,12 @@ class RAGChat:
         Blend the current question with recent conversation history so that
         follow-up questions like "tell me more" or "what about SNOMED then"
         retrieve the right chunks even without explicit topic keywords.
+
+        For short/vague follow-ups (≤ 10 words) the last assistant response
+        is also included — it contains the topical keywords (FHIR, governance,
+        interoperability…) that drive accurate retrieval.  Without this, a
+        follow-up like "ok, what is step 1?" carries almost no signal and
+        retrieves unrelated documents.
         """
         if not self.history:
             return user_message
@@ -119,7 +125,21 @@ class RAGChat:
         if not user_turns:
             return user_message
 
-        context_prefix = " | ".join(user_turns)
+        # For short follow-ups, also blend the last assistant answer so the
+        # embedder has strong topical keywords to work with.
+        is_short_followup = len(user_message.split()) <= 10
+        parts = list(user_turns)
+
+        if is_short_followup:
+            last_assistant = next(
+                (m["content"] for m in reversed(self.history) if m["role"] == "assistant"),
+                "",
+            )
+            if last_assistant:
+                # First 250 chars captures the topic sentence(s) with key terms
+                parts.append(last_assistant[:250])
+
+        context_prefix = " | ".join(parts)
         return f"{context_prefix} | {user_message}"
 
     def retrieve(self, user_message: str) -> list[dict]:
