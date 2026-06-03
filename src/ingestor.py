@@ -23,6 +23,7 @@ from docx import Document as DocxDocument
 from src.chunker import DocumentChunker, Chunk
 from src.embedder import Embedder
 from src.store import VectorStore
+from src.document_registry import register as registry_register, extract_pdf_metadata
 
 console = Console()
 
@@ -154,6 +155,16 @@ class DocumentIngestor:
         # 4. Store
         added = self.store.add_chunks(all_chunks, embeddings)
         console.print(f"  [green]✓ {added} chunks added to knowledge base[/green]")
+
+        # 5. Register in document registry (auto-extract PDF metadata)
+        pdf_meta = extract_pdf_metadata(path) if path.suffix.lower() == ".pdf" else {}
+        registry_register(
+            source_file=path.name,
+            title=pdf_meta.get("title", ""),
+            authors=pdf_meta.get("authors", ""),
+            year=pdf_meta.get("year", ""),
+            domain=resolved_domain,
+        )
 
         return {
             "file": path.name,

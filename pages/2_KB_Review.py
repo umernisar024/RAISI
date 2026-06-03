@@ -22,6 +22,7 @@ from src.kb_submissions import (
     move_to_kb, reject_submission, get_submission_file_path,
 )
 from src.security_log import log_event
+from src.document_registry import register as registry_register, update as registry_update
 
 # ── Auth check ────────────────────────────────────────────────────────────────
 current_user = require_login(allowed_roles=["admin", "reviewer"])
@@ -109,6 +110,18 @@ def _render_review_form(record: dict) -> None:
                         "admin_action",
                         username=current_user["username"],
                         detail=f"KB submission approved: {record['id']} → {target_folder}",
+                    )
+                    # Pre-populate document registry with submission metadata
+                    # so citations are meaningful before/after ingestion
+                    from src.kb_submissions import KB_FOLDER_LABELS
+                    registry_register(
+                        source_file=record["stored_filename"],
+                        title=record.get("content_name", ""),
+                        description=record.get("description", ""),
+                        url=record.get("url", ""),
+                        domain=target_folder,
+                        category=KB_FOLDER_LABELS.get(target_folder, target_folder),
+                        overwrite=True,
                     )
                     st.success(msg)
                     st.session_state.pop(f"reviewing_{record['id']}", None)

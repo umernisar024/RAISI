@@ -40,6 +40,7 @@ from src.security_log import log_event, load_security_log
 from src.rate_limiter import check_limit, record_question, get_all_usage_today, get_limit, reset_user_today
 from src.suggestions import is_not_found, generate_suggestions
 from src.kb_submissions import KB_SUBFOLDERS
+from src.document_registry import format_citation, get_all as registry_get_all, update as registry_update, get as registry_get
 
 
 # ── Server-level cache — loaded ONCE, shared across all user sessions ─────────
@@ -72,6 +73,36 @@ def get_stats() -> dict:
     """Return KB statistics — full metadata scan, cached for 5 minutes."""
     _, store = load_shared_resources()
     return store.stats()
+
+
+# ── Cached admin data reads ───────────────────────────────────────────────────
+# All defined at module level so @st.cache_data hash keys are stable.
+# Short TTLs because these files change during a session (user adds, etc.).
+# Callers must call .clear() after any mutation to ensure fresh data.
+
+@st.cache_data(ttl=30)
+def _cached_users() -> list:
+    return get_all_users()
+
+@st.cache_data(ttl=20)
+def _cached_usage_today() -> dict:
+    return get_all_usage_today()
+
+@st.cache_data(ttl=60)
+def _cached_feedback_summary() -> dict:
+    return feedback_summary()
+
+@st.cache_data(ttl=60)
+def _cached_feedback_log(limit: int = 100_000) -> list:
+    return load_feedback(limit=limit)
+
+@st.cache_data(ttl=60)
+def _cached_security_log(limit: int = 100_000) -> list:
+    return load_security_log(limit=limit)
+
+@st.cache_data(ttl=60)
+def _cached_registry() -> list:
+    return registry_get_all()
 
 
 # ── Persona definitions ───────────────────────────────────────────────────────
@@ -462,13 +493,34 @@ def _main_page():
             f"— {persona['description']}"
         )
 
-    # ── Tabs (admin) or plain container (user) ────────────────────────────────────
+    # ── Admin section selector (segmented_control = tab-like bar at top) ────────
+    # Using segmented_control instead of st.tabs so we know which section is active
+    # and can conditionally render st.chat_input — which only pins to the bottom
+    # of the viewport when rendered at page level, not inside a container/tab.
+    _ADMIN_SECTIONS = ["💬 Chat", "👥 Users", "📊 Feedback", "🔒 Security", "📥 Ingestion"]
+
     if is_admin:
-        tab_chat, tab_users, tab_feedback, tab_security, tab_kb = st.tabs(
-            ["💬 Chat", "👥 User Management", "📊 Feedback Log", "🔒 Security Log", "📥 Ingestion"]
+        _admin_section = st.segmented_control(
+            "Admin section",
+            options=_ADMIN_SECTIONS,
+            default="💬 Chat",
+            label_visibility="collapsed",
+            key="admin_section_ctrl",
         )
+        # Only show chat input on Chat section — keeps it pinned to bottom there,
+        # invisible everywhere else.
+        if _admin_section == "💬 Chat":
+            prompt = st.chat_input("Ask a question ...")
+            if not prompt and "pending_suggestion" in st.session_state:
+                prompt = st.session_state.pop("pending_suggestion")
+        else:
+            prompt = None
+            st.session_state.pop("pending_suggestion", None)
     else:
-        tab_chat = st.container()
+        _admin_section = None
+        prompt = st.chat_input("Ask a question ...")
+        if not prompt and "pending_suggestion" in st.session_state:
+            prompt = st.session_state.pop("pending_suggestion")
 
 
     # ══════════════════════════════════════════════════════════════════════════════
@@ -535,11 +587,16 @@ def _main_page():
         with st.expander(f"Sources ({len(sources)} chunks retrieved)"):
             for i, r in enumerate(sources, 1):
                 meta = r["metadata"]
-                st.caption(
-                    f"{i}. {meta.get('source_file', 'unknown')} "
-                    f"— page {meta.get('page_number', 'N/A')} "
-                    f"— score {r['score']:.3f}"
-                )
+                source_file = meta.get("source_file", "unknown")
+                citation = format_citation(source_file)
+                page = meta.get("page_number", "N/A")
+                score = r["score"]
+                # Show full citation as bold title, filename dimmed below if different
+                st.markdown(f"**{i}. {citation}**")
+                if citation != source_file:
+                    st.caption(f"📄 {source_file} — page {page} — score {score:.3f}")
+                else:
+                    st.caption(f"page {page} — score {score:.3f}")
                 st.write(r["text"][:400] + ("..." if len(r["text"]) > 400 else ""))
                 if i < len(sources):
                     st.divider()
@@ -579,19 +636,10 @@ def _main_page():
 
 
     # ══════════════════════════════════════════════════════════════════════════════
-    # TAB 1 — CHAT
+    # SECTION 1 — CHAT
     # ══════════════════════════════════════════════════════════════════════════════
 
-    with tab_chat:
-
-        # ── Chat input — inside the Chat tab so it only appears here ─────────────
-        # Streamlit 1.36+ keeps st.chat_input sticky at the bottom even when
-        # placed inside a tab, so there is no UX loss vs. the old page-level placement.
-        prompt = st.chat_input("Ask a question ...")
-
-        # ── Intercept a suggestion the user clicked in the previous rerun ────────
-        if not prompt and "pending_suggestion" in st.session_state:
-            prompt = st.session_state.pop("pending_suggestion")
+    if not is_admin or _admin_section == "💬 Chat":
 
         if is_admin and stats["total_chunks"] == 0:
             st.warning("⚠️ Knowledge base is empty. Go to the **📥 Ingestion** tab to index your documents.")
@@ -702,13 +750,19 @@ def _main_page():
     # TAB 2 — USER MANAGEMENT (admin only)
     # ══════════════════════════════════════════════════════════════════════════════
 
-    if is_admin:
-        with tab_users:
+    if is_admin and _admin_section == "👥 Users":
+
+        @st.fragment
+        def _users_section(admin_username: str):
+            """
+            Fragment — reruns only this section when buttons are clicked,
+            no full-page flash/jerk.
+            """
             st.subheader("Current users")
 
-            users = get_all_users()
+            users       = _cached_users()
             _daily_limit = get_limit()
-            _usage_today = get_all_usage_today()
+            _usage_today = _cached_usage_today()
 
             for u in users:
                 col_name, col_role, col_usage, col_reset, col_del = st.columns([3, 1, 1, 1, 1])
@@ -728,19 +782,21 @@ def _main_page():
                     if u["role"] != "admin" and _daily_limit > 0:
                         if st.button("↺ Reset", key=f"reset_{u['username']}", help="Reset today's question count"):
                             reset_user_today(u["username"])
-                            log_event("admin_action", username=current_user["username"],
+                            log_event("admin_action", username=admin_username,
                                       detail=f"reset daily limit for: {u['username']}")
+                            _cached_usage_today.clear()
                             st.toast(f"Reset usage for {u['username']}")
-                            st.rerun()
+                            st.rerun(scope="fragment")
                 with col_del:
                     if u["username"] != "admin":
                         if st.button("🗑️ Delete", key=f"del_{u['username']}"):
                             ok, msg = delete_user(u["username"])
                             if ok:
-                                log_event("user_deleted", username=current_user["username"],
+                                log_event("user_deleted", username=admin_username,
                                           detail=f"deleted user: {u['username']}")
+                                _cached_users.clear()
                             st.toast(msg)
-                            st.rerun()
+                            st.rerun(scope="fragment")
                     else:
                         st.caption("protected")
 
@@ -751,17 +807,18 @@ def _main_page():
                 col1, col2 = st.columns(2)
                 with col1:
                     new_username = st.text_input("Username")
-                    new_name = st.text_input("Full name")
+                    new_name     = st.text_input("Full name")
                 with col2:
                     new_password = st.text_input("Password", type="password")
-                    new_role = st.selectbox("Role", ["user", "reviewer", "admin"])
+                    new_role     = st.selectbox("Role", ["user", "reviewer", "admin"])
                 if st.form_submit_button("Add user", use_container_width=True):
                     ok, msg = add_user(new_username, new_password, new_role, new_name)
                     if ok:
-                        log_event("user_created", username=current_user["username"],
+                        log_event("user_created", username=admin_username,
                                   detail=f"created user: {new_username} role: {new_role}")
+                        _cached_users.clear()
                         st.success(msg)
-                        st.rerun()
+                        st.rerun(scope="fragment")
                     else:
                         st.error(msg)
 
@@ -769,89 +826,93 @@ def _main_page():
             st.subheader("Change password")
 
             with st.form("change_pw_form", clear_on_submit=True):
-                usernames = [u["username"] for u in users]
-                target = st.selectbox("User", usernames)
-                new_pw = st.text_input("New password", type="password")
+                _pw_users  = _cached_users()
+                usernames  = [u["username"] for u in _pw_users]
+                target     = st.selectbox("User", usernames)
+                new_pw     = st.text_input("New password", type="password")
                 if st.form_submit_button("Update password", use_container_width=True):
                     ok, msg = change_password(target, new_pw)
                     if ok:
-                        log_event("password_changed", username=current_user["username"],
+                        log_event("password_changed", username=admin_username,
                                   detail=f"changed password for: {target}")
                     if ok:
                         st.success(msg)
                     else:
                         st.error(msg)
 
+        _users_section(current_user["username"])
+
 
     # ══════════════════════════════════════════════════════════════════════════════
     # TAB 3 — FEEDBACK LOG (admin only)
     # ══════════════════════════════════════════════════════════════════════════════
 
-    if is_admin:
-        with tab_feedback:
+    if is_admin and _admin_section == "📊 Feedback":
 
-            summary = feedback_summary()
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Total ratings", summary["total"])
-            m2.metric("👍 Helpful", summary["helpful"])
-            m3.metric("👎 Not helpful", summary["not_helpful"])
-            m4.metric("Satisfaction", f"{summary['pct_helpful']}%")
+        summary = _cached_feedback_summary()
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total ratings", summary["total"])
+        m2.metric("👍 Helpful", summary["helpful"])
+        m3.metric("👎 Not helpful", summary["not_helpful"])
+        m4.metric("Satisfaction", f"{summary['pct_helpful']}%")
 
-            st.divider()
+        st.divider()
 
-            # ── Export and clear actions ──────────────────────────────────────────
-            _all_feedback = load_feedback(limit=100_000)   # load all for export
-            _fcol1, _fcol2, _fcol3 = st.columns([2, 2, 4])
+        # ── Export and clear actions ──────────────────────────────────────────
+        _all_feedback = _cached_feedback_log(limit=100_000)
+        _fcol1, _fcol2, _fcol3 = st.columns([2, 2, 4])
 
-            with _fcol1:
-                st.download_button(
-                    label="⬇️ Download as CSV",
-                    data=_to_csv(_all_feedback),
-                    file_name="feedback_log.csv",
-                    mime="text/csv",
-                    disabled=not _all_feedback,
-                    use_container_width=True,
-                )
+        with _fcol1:
+            st.download_button(
+                label="⬇️ Download as CSV",
+                data=_to_csv(_all_feedback),
+                file_name="feedback_log.csv",
+                mime="text/csv",
+                disabled=not _all_feedback,
+                use_container_width=True,
+            )
 
-            with _fcol2:
-                if st.button("🗑️ Clear all feedback", use_container_width=True,
-                             disabled=not _all_feedback):
-                    st.session_state["confirm_clear_feedback"] = True
+        with _fcol2:
+            if st.button("🗑️ Clear all feedback", use_container_width=True,
+                         disabled=not _all_feedback):
+                st.session_state["confirm_clear_feedback"] = True
 
-            if st.session_state.get("confirm_clear_feedback"):
-                st.warning("This will permanently delete all feedback entries. Are you sure?")
-                _cc1, _cc2 = st.columns(2)
-                with _cc1:
-                    if st.button("✅ Yes, clear feedback", type="primary", use_container_width=True):
-                        from src.feedback import FEEDBACK_FILE
-                        FEEDBACK_FILE.unlink(missing_ok=True)
-                        log_event("admin_action", username=current_user["username"],
-                                  detail="feedback log cleared")
-                        st.session_state.pop("confirm_clear_feedback", None)
-                        st.toast("Feedback log cleared.")
-                        st.rerun()
-                with _cc2:
-                    if st.button("✕ Cancel", use_container_width=True):
-                        st.session_state.pop("confirm_clear_feedback", None)
-                        st.rerun()
+        if st.session_state.get("confirm_clear_feedback"):
+            st.warning("This will permanently delete all feedback entries. Are you sure?")
+            _cc1, _cc2 = st.columns(2)
+            with _cc1:
+                if st.button("✅ Yes, clear feedback", type="primary", use_container_width=True):
+                    from src.feedback import FEEDBACK_FILE
+                    FEEDBACK_FILE.unlink(missing_ok=True)
+                    log_event("admin_action", username=current_user["username"],
+                              detail="feedback log cleared")
+                    _cached_feedback_summary.clear()
+                    _cached_feedback_log.clear()
+                    st.session_state.pop("confirm_clear_feedback", None)
+                    st.toast("Feedback log cleared.")
+                    st.rerun()
+            with _cc2:
+                if st.button("✕ Cancel", use_container_width=True):
+                    st.session_state.pop("confirm_clear_feedback", None)
+                    st.rerun()
 
-            st.divider()
+        st.divider()
 
-            entries = load_feedback(limit=50)
-            if not entries:
-                st.info("No feedback submitted yet.")
-            else:
-                st.caption(f"Showing {len(entries)} most recent entries (download CSV for full log)")
-                for e in entries:
-                    icon = "👍" if "👍" in e.get("rating", "") else "👎"
-                    with st.expander(
-                        f"{icon}  {e['timestamp']}  —  {e.get('persona', '')}  "
-                        f"({e.get('username', 'unknown')})"
-                    ):
-                        st.write(f"**Question:** {e.get('question', '')}")
-                        st.write(f"**Answer:** {e.get('answer', '')[:300]}...")
-                        if e.get("comment"):
-                            st.write(f"**Feedback comment:** {e['comment']}")
+        entries = _cached_feedback_log(limit=50)
+        if not entries:
+            st.info("No feedback submitted yet.")
+        else:
+            st.caption(f"Showing {len(entries)} most recent entries (download CSV for full log)")
+            for e in entries:
+                icon = "👍" if "👍" in e.get("rating", "") else "👎"
+                with st.expander(
+                    f"{icon}  {e['timestamp']}  —  {e.get('persona', '')}  "
+                    f"({e.get('username', 'unknown')})"
+                ):
+                    st.write(f"**Question:** {e.get('question', '')}")
+                    st.write(f"**Answer:** {e.get('answer', '')[:300]}...")
+                    if e.get("comment"):
+                        st.write(f"**Feedback comment:** {e['comment']}")
 
 
     # ══════════════════════════════════════════════════════════════════════════════
@@ -859,229 +920,383 @@ def _main_page():
     # ══════════════════════════════════════════════════════════════════════════════
 
 
-    if is_admin:
-        with tab_security:
+    if is_admin and _admin_section == "🔒 Security":
 
-            sec_entries = load_security_log(limit=100_000)   # all for counts + export
+        sec_entries = _cached_security_log(limit=100_000)
 
-            # Summary counts
-            event_types = {}
-            for e in sec_entries:
-                ev = e.get("event", "unknown")
-                event_types[ev] = event_types.get(ev, 0) + 1
+        # Summary counts
+        event_types = {}
+        for e in sec_entries:
+            ev = e.get("event", "unknown")
+            event_types[ev] = event_types.get(ev, 0) + 1
 
-            failed = event_types.get("failed_login", 0)
-            locked = event_types.get("account_locked", 0)
-            admin_actions = event_types.get("admin_action", 0) + \
-                            event_types.get("user_created", 0) + \
-                            event_types.get("user_deleted", 0) + \
-                            event_types.get("password_changed", 0)
+        failed = event_types.get("failed_login", 0)
+        locked = event_types.get("account_locked", 0)
+        admin_actions = event_types.get("admin_action", 0) + \
+                        event_types.get("user_created", 0) + \
+                        event_types.get("user_deleted", 0) + \
+                        event_types.get("password_changed", 0)
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Failed logins", failed)
-            c2.metric("Lockouts", locked)
-            c3.metric("Admin actions", admin_actions)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Failed logins", failed)
+        c2.metric("Lockouts", locked)
+        c3.metric("Admin actions", admin_actions)
 
-            st.divider()
+        st.divider()
 
-            # ── Export and clear actions ──────────────────────────────────────────
-            _scol1, _scol2, _scol3 = st.columns([2, 2, 4])
+        # ── Export and clear actions ──────────────────────────────────────────
+        _scol1, _scol2, _scol3 = st.columns([2, 2, 4])
 
-            with _scol1:
-                st.download_button(
-                    label="⬇️ Download as CSV",
-                    data=_to_csv(list(reversed(sec_entries))),  # oldest first for CSV
-                    file_name="security_log.csv",
-                    mime="text/csv",
-                    disabled=not sec_entries,
-                    use_container_width=True,
+        with _scol1:
+            st.download_button(
+                label="⬇️ Download as CSV",
+                data=_to_csv(list(reversed(sec_entries))),  # oldest first for CSV
+                file_name="security_log.csv",
+                mime="text/csv",
+                disabled=not sec_entries,
+                use_container_width=True,
+            )
+
+        with _scol2:
+            if st.button("🗑️ Clear security log", use_container_width=True,
+                         disabled=not sec_entries):
+                st.session_state["confirm_clear_security"] = True
+
+        if st.session_state.get("confirm_clear_security"):
+            st.warning("This will permanently delete all security log entries. Are you sure?")
+            _sc1, _sc2 = st.columns(2)
+            with _sc1:
+                if st.button("✅ Yes, clear log", type="primary", use_container_width=True):
+                    from src.security_log import SECURITY_LOG_FILE
+                    SECURITY_LOG_FILE.unlink(missing_ok=True)
+                    log_event("admin_action", username=current_user["username"],
+                              detail="security log cleared")
+                    _cached_security_log.clear()
+                    st.session_state.pop("confirm_clear_security", None)
+                    st.toast("Security log cleared.")
+                    st.rerun()
+            with _sc2:
+                if st.button("✕ Cancel ", use_container_width=True):  # trailing space avoids key clash
+                    st.session_state.pop("confirm_clear_security", None)
+                    st.rerun()
+
+        st.divider()
+
+        # Show most recent 100 in the UI
+        sec_entries_display = sec_entries[:100]
+        if not sec_entries_display:
+            st.info("No security events recorded yet.")
+        else:
+            st.caption(f"Showing {len(sec_entries_display)} most recent events (download CSV for full log)")
+            EVENT_ICONS = {
+                "failed_login": "⚠️",
+                "account_locked": "🔒",
+                "successful_login": "✅",
+                "admin_action": "🛠️",
+                "user_created": "👤",
+                "user_deleted": "🗑️",
+                "password_changed": "🔑",
+                "chat_error": "❌",
+            }
+            for e in sec_entries_display:
+                icon = EVENT_ICONS.get(e.get("event", ""), "•")
+                label = (
+                    f"{icon} {e['timestamp']}  —  "
+                    f"{e.get('event', '').replace('_', ' ').title()}  "
+                    f"({e.get('username', '—')})"
                 )
-
-            with _scol2:
-                if st.button("🗑️ Clear security log", use_container_width=True,
-                             disabled=not sec_entries):
-                    st.session_state["confirm_clear_security"] = True
-
-            if st.session_state.get("confirm_clear_security"):
-                st.warning("This will permanently delete all security log entries. Are you sure?")
-                _sc1, _sc2 = st.columns(2)
-                with _sc1:
-                    if st.button("✅ Yes, clear log", type="primary", use_container_width=True):
-                        from src.security_log import SECURITY_LOG_FILE
-                        SECURITY_LOG_FILE.unlink(missing_ok=True)
-                        log_event("admin_action", username=current_user["username"],
-                                  detail="security log cleared")
-                        st.session_state.pop("confirm_clear_security", None)
-                        st.toast("Security log cleared.")
-                        st.rerun()
-                with _sc2:
-                    if st.button("✕ Cancel ", use_container_width=True):  # trailing space avoids key clash
-                        st.session_state.pop("confirm_clear_security", None)
-                        st.rerun()
-
-            st.divider()
-
-            # Show most recent 100 in the UI
-            sec_entries_display = sec_entries[:100]
-            if not sec_entries_display:
-                st.info("No security events recorded yet.")
-            else:
-                st.caption(f"Showing {len(sec_entries_display)} most recent events (download CSV for full log)")
-                EVENT_ICONS = {
-                    "failed_login": "⚠️",
-                    "account_locked": "🔒",
-                    "successful_login": "✅",
-                    "admin_action": "🛠️",
-                    "user_created": "👤",
-                    "user_deleted": "🗑️",
-                    "password_changed": "🔑",
-                    "chat_error": "❌",
-                }
-                for e in sec_entries_display:
-                    icon = EVENT_ICONS.get(e.get("event", ""), "•")
-                    label = (
-                        f"{icon} {e['timestamp']}  —  "
-                        f"{e.get('event', '').replace('_', ' ').title()}  "
-                        f"({e.get('username', '—')})"
-                    )
-                    with st.expander(label):
-                        if e.get("detail"):
-                            st.caption(e["detail"])
-                        if e.get("ip"):
-                            st.caption(f"IP: {e['ip']}")
+                with st.expander(label):
+                    if e.get("detail"):
+                        st.caption(e["detail"])
+                    if e.get("ip"):
+                        st.caption(f"IP: {e['ip']}")
 
 
     # ══════════════════════════════════════════════════════════════════════════════
     # TAB 5 — INGESTION (admin only)
     # ══════════════════════════════════════════════════════════════════════════════
 
-    if is_admin:
-        with tab_kb:
+    if is_admin and _admin_section == "📥 Ingestion":
 
-            st.subheader("📥 Run Knowledge Base Ingestion")
-            st.caption(
-                "Downloads new documents from S3 (or reads from data/raw/ in local mode) "
-                "and indexes them into the vector database. Already-indexed files are skipped "
-                "automatically — safe to run at any time."
+        st.subheader("📥 Run Knowledge Base Ingestion")
+        st.caption(
+            "Downloads new documents from S3 (or reads from data/raw/ in local mode) "
+            "and indexes them into the vector database. Already-indexed files are skipped "
+            "automatically — safe to run at any time."
+        )
+
+        st.divider()
+
+        # ── Options ───────────────────────────────────────────────────────────
+        col_folder, col_force = st.columns([2, 1])
+
+        with col_folder:
+            folder_options = ["All folders"] + KB_SUBFOLDERS
+            selected_folder = st.selectbox(
+                "Folder to ingest",
+                options=folder_options,
+                help="Choose a specific subfolder to ingest, or run all folders at once.",
             )
 
-            st.divider()
+        with col_force:
+            st.write("")   # vertical alignment spacer
+            force_reindex = st.checkbox(
+                "Force re-index",
+                value=False,
+                help="Re-index all files even if already in the database. "
+                     "Use after replacing a document with an updated version.",
+            )
 
-            # ── Options ───────────────────────────────────────────────────────────
-            col_folder, col_force = st.columns([2, 1])
+        # ── Run button ────────────────────────────────────────────────────────
+        run_col, _ = st.columns([1, 2])
+        with run_col:
+            run_clicked = st.button(
+                "▶ Run Ingestion",
+                type="primary",
+                use_container_width=True,
+            )
 
-            with col_folder:
-                folder_options = ["All folders"] + KB_SUBFOLDERS
-                selected_folder = st.selectbox(
-                    "Folder to ingest",
-                    options=folder_options,
-                    help="Choose a specific subfolder to ingest, or run all folders at once.",
+        if run_clicked:
+            # Server-side validation: confirm selected_folder is in the known
+            # allow-list before passing it to the subprocess.  The UI selectbox
+            # already limits the choices, but defence-in-depth requires
+            # validating on the server regardless of how the value arrived.
+            if selected_folder != "All folders" and selected_folder not in KB_SUBFOLDERS:
+                st.error(f"Invalid folder '{selected_folder}'. Must be one of the known KB subfolders.")
+                st.stop()
+
+            # Build command — same Python interpreter as the running app
+            _project_root = Path(__file__).parent
+            cmd = [sys.executable, "-X", "utf8",
+                   str(_project_root / "scripts" / "run_ingestion.py")]
+
+            if selected_folder != "All folders":
+                cmd += ["--folder", selected_folder]
+            if force_reindex:
+                cmd += ["--force"]
+
+            log_event(
+                "admin_action",
+                username=current_user["username"],
+                detail=f"ingestion started: folder={selected_folder} force={force_reindex}",
+            )
+
+            # Stream output line-by-line into the UI
+            with st.status("⏳ Ingestion running...", expanded=True) as _status:
+                _output_area = st.empty()
+                _output_text = ""
+
+                try:
+                    _env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+                    _proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        cwd=str(_project_root),
+                        env=_env,
+                    )
+
+                    for _line in iter(_proc.stdout.readline, b""):
+                        _output_text += _line.decode("utf-8", errors="replace")
+                        _output_area.code(_output_text, language="text")
+
+                    _proc.wait()
+
+                    if _proc.returncode == 0:
+                        _status.update(label="✅ Ingestion complete!", state="complete")
+                        log_event(
+                            "admin_action",
+                            username=current_user["username"],
+                            detail=f"ingestion finished successfully: folder={selected_folder}",
+                        )
+                        # Bust the KB stats cache so the sidebar reflects new counts
+                        get_stats.clear()
+                    else:
+                        _status.update(label="❌ Ingestion failed — see output above.", state="error")
+                        log_event(
+                            "admin_action",
+                            username=current_user["username"],
+                            detail=f"ingestion failed (exit {_proc.returncode}): folder={selected_folder}",
+                        )
+
+                except Exception as _exc:
+                    _status.update(label=f"❌ Error: {_exc}", state="error")
+
+        # ── Current KB stats (refreshes on each page load) ───────────────────
+        st.divider()
+        st.subheader("Current Knowledge Base")
+
+        _kb_stats = get_stats()   # use module-level cached version
+        _s1, _s2 = st.columns(2)
+        _s1.metric("Total indexed chunks", _kb_stats["total_chunks"])
+        _s2.metric("SSCP priority chunks", _kb_stats.get("sscp_chunks", 0))
+
+        if _kb_stats.get("by_domain"):
+            st.caption("**Chunks by domain folder**")
+            _domain_cols = st.columns(4)
+            for _i, (_dom, _cnt) in enumerate(sorted(_kb_stats["by_domain"].items())):
+                _domain_cols[_i % 4].metric(_dom, _cnt)
+
+        if _kb_stats["total_chunks"] == 0:
+            st.info(
+                "The knowledge base is empty. "
+                "Upload documents to S3 (or data/raw/ in local mode) then click **▶ Run Ingestion**."
+            )
+
+        # ── Document Registry ─────────────────────────────────────────────
+        st.divider()
+        st.subheader("📋 Document Registry")
+        st.caption(
+            "Metadata catalog for all indexed documents. "
+            "Titles and organisations are used in chat source citations. "
+            "Edit any row to improve the citation shown to users."
+        )
+
+        _reg_docs = _cached_registry()
+
+        if not _reg_docs:
+            st.info("No documents registered yet. Run ingestion to populate the registry.")
+        else:
+            # ── Search + export toolbar ───────────────────────────────────
+            _reg_col1, _reg_col2 = st.columns([3, 1])
+            with _reg_col1:
+                _reg_search = st.text_input(
+                    "🔍 Search registry",
+                    placeholder="Filter by title, author, organisation, filename...",
+                    label_visibility="collapsed",
                 )
-
-            with col_force:
-                st.write("")   # vertical alignment spacer
-                force_reindex = st.checkbox(
-                    "Force re-index",
-                    value=False,
-                    help="Re-index all files even if already in the database. "
-                         "Use after replacing a document with an updated version.",
+            with _reg_col2:
+                # Export full registry as CSV
+                _reg_csv_buf = io.StringIO()
+                _reg_csv_writer = csv.DictWriter(
+                    _reg_csv_buf,
+                    fieldnames=["title", "authors", "organization", "year",
+                                "url", "description", "domain", "source_file", "date_indexed"],
+                    extrasaction="ignore",
                 )
-
-            # ── Run button ────────────────────────────────────────────────────────
-            run_col, _ = st.columns([1, 2])
-            with run_col:
-                run_clicked = st.button(
-                    "▶ Run Ingestion",
-                    type="primary",
+                _reg_csv_writer.writeheader()
+                _reg_csv_writer.writerows(_reg_docs)
+                st.download_button(
+                    label="⬇️ Export CSV",
+                    data=("﻿" + _reg_csv_buf.getvalue()).encode("utf-8"),
+                    file_name="document_registry.csv",
+                    mime="text/csv",
                     use_container_width=True,
                 )
 
-            if run_clicked:
-                # Server-side validation: confirm selected_folder is in the known
-                # allow-list before passing it to the subprocess.  The UI selectbox
-                # already limits the choices, but defence-in-depth requires
-                # validating on the server regardless of how the value arrived.
-                if selected_folder != "All folders" and selected_folder not in KB_SUBFOLDERS:
-                    st.error(f"Invalid folder '{selected_folder}'. Must be one of the known KB subfolders.")
-                    st.stop()
+            # ── Filter docs by search query ───────────────────────────────
+            if _reg_search.strip():
+                _q = _reg_search.strip().lower()
+                _reg_docs = [
+                    d for d in _reg_docs
+                    if _q in (d.get("title") or "").lower()
+                    or _q in (d.get("authors") or "").lower()
+                    or _q in (d.get("organization") or "").lower()
+                    or _q in (d.get("source_file") or "").lower()
+                    or _q in (d.get("description") or "").lower()
+                    or _q in (d.get("year") or "").lower()
+                ]
 
-                # Build command — same Python interpreter as the running app
-                _project_root = Path(__file__).parent
-                cmd = [sys.executable, "-X", "utf8",
-                       str(_project_root / "scripts" / "run_ingestion.py")]
+            st.caption(f"{len(_reg_docs)} document(s) {'matching' if _reg_search.strip() else 'registered'}")
 
-                if selected_folder != "All folders":
-                    cmd += ["--folder", selected_folder]
-                if force_reindex:
-                    cmd += ["--force"]
+            # ── Document cards ────────────────────────────────────────────
+            if "reg_editing" not in st.session_state:
+                st.session_state.reg_editing = None
 
-                log_event(
-                    "admin_action",
-                    username=current_user["username"],
-                    detail=f"ingestion started: folder={selected_folder} force={force_reindex}",
-                )
+            for _doc in _reg_docs:
+                _sf = _doc["source_file"]
+                _is_editing = st.session_state.reg_editing == _sf
 
-                # Stream output line-by-line into the UI
-                with st.status("⏳ Ingestion running...", expanded=True) as _status:
-                    _output_area = st.empty()
-                    _output_text = ""
+                # Try to find the file on disk for download
+                _doc_domain = _doc.get("domain", "")
+                _doc_file_path = None
+                for _candidate_dir in [
+                    Path("data/raw") / _doc_domain / _sf,
+                    Path("data/raw") / _sf,
+                ]:
+                    if _candidate_dir.exists():
+                        _doc_file_path = _candidate_dir
+                        break
 
-                    try:
-                        _env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-                        _proc = subprocess.Popen(
-                            cmd,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            cwd=str(_project_root),
-                            env=_env,
+                with st.container(border=True):
+                    _rc1, _rc2, _rc3 = st.columns([5, 1, 1])
+                    with _rc1:
+                        _title = _doc.get("title") or _sf
+                        _org   = _doc.get("organization") or _doc.get("authors") or ""
+                        _year  = _doc.get("year") or ""
+                        _badge = (
+                            f"({_org}, {_year})" if _org and _year
+                            else f"({_org})" if _org
+                            else f"({_year})" if _year
+                            else ""
                         )
+                        st.markdown(f"**{_title}** {_badge}")
+                        st.caption(
+                            f"📄 {_sf}  ·  {_doc.get('domain', '')}  "
+                            f"·  indexed {_doc.get('date_indexed', '')[:10]}"
+                        )
+                        if _doc.get("description"):
+                            st.caption(_doc["description"][:120])
+                        if _doc.get("url"):
+                            st.caption(f"🔗 {_doc['url']}")
 
-                        for _line in iter(_proc.stdout.readline, b""):
-                            _output_text += _line.decode("utf-8", errors="replace")
-                            _output_area.code(_output_text, language="text")
-
-                        _proc.wait()
-
-                        if _proc.returncode == 0:
-                            _status.update(label="✅ Ingestion complete!", state="complete")
-                            log_event(
-                                "admin_action",
-                                username=current_user["username"],
-                                detail=f"ingestion finished successfully: folder={selected_folder}",
+                    with _rc2:
+                        # Download the source file if it exists on disk
+                        if _doc_file_path:
+                            st.download_button(
+                                label="⬇️",
+                                data=_doc_file_path.read_bytes(),
+                                file_name=_sf,
+                                key=f"reg_dl_{_sf}",
+                                use_container_width=True,
+                                help="Download source file",
                             )
-                            # Bust the KB stats cache so the sidebar reflects new counts
-                            get_stats.clear()
                         else:
-                            _status.update(label="❌ Ingestion failed — see output above.", state="error")
-                            log_event(
-                                "admin_action",
-                                username=current_user["username"],
-                                detail=f"ingestion failed (exit {_proc.returncode}): folder={selected_folder}",
+                            st.button(
+                                "⬇️",
+                                key=f"reg_dl_{_sf}",
+                                disabled=True,
+                                use_container_width=True,
+                                help="File not found on disk",
                             )
 
-                    except Exception as _exc:
-                        _status.update(label=f"❌ Error: {_exc}", state="error")
+                    with _rc3:
+                        if st.button("✏️", key=f"reg_edit_{_sf}", use_container_width=True, help="Edit metadata"):
+                            st.session_state.reg_editing = None if _is_editing else _sf
+                            st.rerun()
 
-            # ── Current KB stats (refreshes on each page load) ───────────────────
-            st.divider()
-            st.subheader("Current Knowledge Base")
+                    if _is_editing:
+                        with st.form(key=f"reg_form_{_sf}", clear_on_submit=False):
+                            _f1, _f2 = st.columns(2)
+                            with _f1:
+                                _new_title   = st.text_input("Title",      value=_doc.get("title", ""))
+                                _new_authors  = st.text_input("Author(s)", value=_doc.get("authors", ""))
+                                _new_url     = st.text_input("URL",        value=_doc.get("url", ""))
+                            with _f2:
+                                _new_org  = st.text_input("Organisation", value=_doc.get("organization", ""))
+                                _new_year = st.text_input("Year",         value=_doc.get("year", ""))
+                                _new_desc = st.text_input("Description",  value=_doc.get("description", ""))
 
-            _kb_stats = get_stats()   # use module-level cached version
-            _s1, _s2 = st.columns(2)
-            _s1.metric("Total indexed chunks", _kb_stats["total_chunks"])
-            _s2.metric("SSCP priority chunks", _kb_stats.get("sscp_chunks", 0))
-
-            if _kb_stats.get("by_domain"):
-                st.caption("**Chunks by domain folder**")
-                _domain_cols = st.columns(4)
-                for _i, (_dom, _cnt) in enumerate(sorted(_kb_stats["by_domain"].items())):
-                    _domain_cols[_i % 4].metric(_dom, _cnt)
-
-            if _kb_stats["total_chunks"] == 0:
-                st.info(
-                    "The knowledge base is empty. "
-                    "Upload documents to S3 (or data/raw/ in local mode) then click **▶ Run Ingestion**."
-                )
+                            _save_col, _cancel_col = st.columns(2)
+                            with _save_col:
+                                if st.form_submit_button("💾 Save", use_container_width=True, type="primary"):
+                                    registry_update(
+                                        _sf,
+                                        title=_new_title,
+                                        authors=_new_authors,
+                                        organization=_new_org,
+                                        year=_new_year,
+                                        url=_new_url,
+                                        description=_new_desc,
+                                    )
+                                    _cached_registry.clear()
+                                    st.session_state.reg_editing = None
+                                    st.success("Registry updated.")
+                                    st.rerun()
+                            with _cancel_col:
+                                if st.form_submit_button("Cancel", use_container_width=True):
+                                    st.session_state.reg_editing = None
+                                    st.rerun()
 
 
 # ── Navigation (Streamlit 1.36+) ──────────────────────────────────────────────
