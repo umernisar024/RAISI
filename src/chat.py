@@ -27,6 +27,9 @@ FALLBACK_SYSTEM_PROMPT = (
 # How many recent conversation turns to blend into the retrieval query.
 RETRIEVAL_HISTORY_TURNS = int(os.getenv("RETRIEVAL_HISTORY_TURNS", "2"))
 
+# Follow-ups with fewer words than this get rewritten by the LLM before retrieval.
+REWRITE_WORD_THRESHOLD = int(os.getenv("REWRITE_WORD_THRESHOLD", "12"))
+
 
 def load_system_prompt(path: Path = DEFAULT_SYSTEM_PROMPT_PATH) -> str:
     """Load system prompt from file, falling back to the built-in default."""
@@ -104,41 +107,63 @@ class RAGChat:
 
     def _contextual_query(self, user_message: str) -> str:
         """
-        Blend the current question with recent conversation history so that
-        follow-up questions like "tell me more" or "what about SNOMED then"
-        retrieve the right chunks even without explicit topic keywords.
+        Produce a retrieval query that works even for short follow-ups.
 
-        For short/vague follow-ups (≤ 10 words) the last assistant response
-        is also included — it contains the topical keywords (FHIR, governance,
-        interoperability…) that drive accurate retrieval.  Without this, a
-        follow-up like "ok, what is step 1?" carries almost no signal and
-        retrieves unrelated documents.
+        Strategy:
+        - Long questions (> REWRITE_WORD_THRESHOLD words): use as-is, no extra cost.
+        - Short follow-ups: use the LLM to rewrite the question as a complete,
+          self-contained query using recent conversation history.  This turns
+          "so what is step 1?" into "What is the first step a health minister
+          should take to implement digital health standards in a low-resource
+          country?" — which retrieves the right KB chunks.
+        - Falls back to simple context blending if the LLM rewrite fails.
         """
         if not self.history:
             return user_message
 
-        user_turns = [
-            m["content"] for m in self.history
-            if m["role"] == "user"
-        ][-RETRIEVAL_HISTORY_TURNS:]
+        word_count = len(user_message.split())
 
-        if not user_turns:
+        # Long questions carry enough signal on their own
+        if word_count > REWRITE_WORD_THRESHOLD:
             return user_message
 
-        # For short follow-ups, also blend the last assistant answer so the
-        # embedder has strong topical keywords to work with.
-        is_short_followup = len(user_message.split()) <= 10
-        parts = list(user_turns)
-
-        if is_short_followup:
-            last_assistant = next(
-                (m["content"] for m in reversed(self.history) if m["role"] == "assistant"),
-                "",
+        # ── LLM-based query rewrite ───────────────────────────────────────────
+        recent = self.history[-4:]  # last 2 full exchanges
+        history_text = "\n".join(
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content'][:400]}"
+            for m in recent
+        )
+        rewrite_prompt = (
+            f"Conversation so far:\n{history_text}\n\n"
+            f"Follow-up question: \"{user_message}\"\n\n"
+            f"Rewrite this follow-up as a complete, specific, standalone question "
+            f"for searching a digital health standards knowledge base. "
+            f"Include all relevant topic context from the conversation. "
+            f"Return ONLY the rewritten question, nothing else."
+        )
+        try:
+            rewritten = llm_chat(
+                system_prompt=(
+                    "You rewrite follow-up questions into complete standalone search queries. "
+                    "Return only the rewritten question — no explanation, no punctuation changes."
+                ),
+                messages=[{"role": "user", "content": rewrite_prompt}],
             )
-            if last_assistant:
-                # First 250 chars captures the topic sentence(s) with key terms
-                parts.append(last_assistant[:250])
+            rewritten = rewritten.strip().strip('"').strip("'")
+            if rewritten:
+                return rewritten
+        except Exception:
+            pass
 
+        # ── Fallback: simple keyword blending ────────────────────────────────
+        user_turns = [
+            m["content"] for m in self.history if m["role"] == "user"
+        ][-RETRIEVAL_HISTORY_TURNS:]
+        last_assistant = next(
+            (m["content"] for m in reversed(self.history) if m["role"] == "assistant"),
+            "",
+        )
+        parts = user_turns + ([last_assistant[:250]] if last_assistant else [])
         context_prefix = " | ".join(parts)
         return f"{context_prefix} | {user_message}"
 

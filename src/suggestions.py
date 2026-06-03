@@ -11,9 +11,29 @@ Only fires on the failure path — no extra cost on successful answers.
 import json
 from src.llm_adapter import chat as llm_chat
 
-# The exact phrase the system prompt emits when it cannot answer.
-# We match on this to detect the "not found" case.
-NOT_FOUND_PHRASE = "could not find relevant information"
+# Phrases that indicate the model could not answer from the retrieved context.
+# The model doesn't always use the exact system-prompt phrase, so we match
+# a broader set of refusal patterns.
+_NOT_FOUND_PHRASES = [
+    "could not find relevant information",
+    "not enough information",
+    "not enough context",
+    "doesn't have enough context",
+    "does not have enough context",
+    "cannot find",
+    "could not find",
+    "retrieved context does not contain",
+    "context does not contain",
+    "outside the scope",
+    "not within the scope",
+    "unable to answer",
+    "cannot answer",
+    "no information available",
+    "knowledge base does not",
+    "not covered in",
+    "don't have information",
+    "do not have information",
+]
 
 SUGGESTION_SYSTEM_PROMPT = """You are helping a user of a digital health standards and interoperability knowledge base refine their question.
 
@@ -30,7 +50,8 @@ Rules:
 
 def is_not_found(response_text: str) -> bool:
     """Return True if the response is a 'not found' refusal."""
-    return NOT_FOUND_PHRASE in response_text.lower()
+    lower = response_text.lower()
+    return any(phrase in lower for phrase in _NOT_FOUND_PHRASES)
 
 
 def generate_suggestions(original_question: str, retrieved_chunks: list[dict]) -> list[str]:
