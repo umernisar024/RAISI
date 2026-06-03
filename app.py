@@ -777,7 +777,10 @@ def _main_page():
                     if ok:
                         log_event("password_changed", username=current_user["username"],
                                   detail=f"changed password for: {target}")
-                    st.success(msg) if ok else st.error(msg)
+                    if ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
 
 
     # ══════════════════════════════════════════════════════════════════════════════
