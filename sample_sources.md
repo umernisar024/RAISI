@@ -21,7 +21,6 @@ These are all free, publicly available. Download them as PDFs and put them in `d
 |---|---|
 | FHIR R4 overview (free PDF) | https://hl7.org/fhir/R4/fhir-spec.zip |
 | FHIR for low resource settings | search "FHIR LMICs" on Google Scholar |
-| IHE technical frameworks | https://profiles.ihe.net |
 
 ---
 
