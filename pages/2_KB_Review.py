@@ -39,7 +39,7 @@ st.caption(
 tab_pending, tab_all = st.tabs(["⏳ Pending Review", "📋 All Submissions"])
 
 
-def _render_file_download(record: dict) -> None:
+def _render_file_download(record: dict, key_prefix: str = "dl") -> None:
     """Show a download button for the file, or a URL link if no file."""
     file_path = get_submission_file_path(record["id"])
 
@@ -49,7 +49,7 @@ def _render_file_download(record: dict) -> None:
             label="⬇️ Download",
             data=file_bytes,
             file_name=record["original_filename"],
-            key=f"dl_{record['id']}",
+            key=f"{key_prefix}_{record['id']}",
             use_container_width=True,
         )
     elif record.get("url"):
@@ -186,7 +186,7 @@ with tab_pending:
                 st.caption(KB_FOLDER_LABELS.get(record["category"], record["category"]))
 
             with col_dl:
-                _render_file_download(record)
+                _render_file_download(record, key_prefix="pending_dl")
 
             with col_review:
                 if st.button("Review", key=f"open_review_{record['id']}", use_container_width=True, type="primary"):
@@ -248,7 +248,7 @@ with tab_all:
                     st.info(f"Review comment: {record['review_comment']}")
                 if record.get("moved_to"):
                     st.success(f"Moved to: {KB_FOLDER_LABELS.get(record['moved_to'], record['moved_to'])}")
-                _render_file_download(record)
+                _render_file_download(record, key_prefix="all_dl")
 
 st.divider()
 st.page_link("app.py", label=f"← Back to {APP_NAME}", icon="💬")
