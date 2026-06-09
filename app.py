@@ -40,7 +40,7 @@ from src.security_log import log_event, load_security_log
 from src.rate_limiter import check_limit, record_question, get_all_usage_today, get_limit, reset_user_today
 from src.suggestions import is_not_found, generate_suggestions
 from src.kb_submissions import KB_SUBFOLDERS
-from src.document_registry import format_citation, get_all as registry_get_all, update as registry_update, get as registry_get
+from src.document_registry import format_citation, get_all as registry_get_all, update as registry_update, get as registry_get, delete as registry_delete
 
 
 # ── Server-level cache — loaded ONCE, shared across all user sessions ─────────
@@ -1219,7 +1219,7 @@ def _main_page():
                         break
 
                 with st.container(border=True):
-                    _rc1, _rc2, _rc3 = st.columns([5, 1, 1])
+                    _rc1, _rc2, _rc3, _rc4 = st.columns([5, 1, 1, 1])
                     with _rc1:
                         _title = _doc.get("title") or _sf
                         _org   = _doc.get("organization") or _doc.get("authors") or ""
@@ -1263,7 +1263,44 @@ def _main_page():
                     with _rc3:
                         if st.button("✏️", key=f"reg_edit_{_sf}", use_container_width=True, help="Edit metadata"):
                             st.session_state.reg_editing = None if _is_editing else _sf
+                            st.session_state.pop(f"reg_confirm_delete_{_sf}", None)
                             st.rerun()
+
+                    with _rc4:
+                        if st.button("🗑️", key=f"reg_del_{_sf}", use_container_width=True, help="Remove from KB and registry"):
+                            st.session_state[f"reg_confirm_delete_{_sf}"] = True
+                            st.session_state.reg_editing = None
+                            st.rerun()
+
+                    # ── Delete confirmation ───────────────────────────────────
+                    if st.session_state.get(f"reg_confirm_delete_{_sf}"):
+                        st.warning(
+                            f"⚠️ Remove **{_doc.get('title') or _sf}** from the knowledge base? "
+                            f"This deletes all indexed chunks AND the registry entry. "
+                            f"The source file in data/raw/ is NOT deleted."
+                        )
+                        _del_c1, _del_c2 = st.columns(2)
+                        with _del_c1:
+                            if st.button("Yes, remove it", key=f"reg_del_confirm_{_sf}",
+                                         type="primary", use_container_width=True):
+                                # 1. Delete chunks from ChromaDB
+                                _chunks_removed = _store.delete_source(_sf)
+                                # 2. Delete from registry
+                                registry_delete(_sf)
+                                # 3. Clear caches
+                                _cached_registry.clear()
+                                log_event(
+                                    "admin_action",
+                                    username=current_user["username"],
+                                    detail=f"Deleted from KB: {_sf} ({_chunks_removed} chunks removed)",
+                                )
+                                st.session_state.pop(f"reg_confirm_delete_{_sf}", None)
+                                st.success(f"Removed {_sf} — {_chunks_removed} chunks deleted.")
+                                st.rerun()
+                        with _del_c2:
+                            if st.button("Cancel", key=f"reg_del_cancel_{_sf}", use_container_width=True):
+                                st.session_state.pop(f"reg_confirm_delete_{_sf}", None)
+                                st.rerun()
 
                     if _is_editing:
                         with st.form(key=f"reg_form_{_sf}", clear_on_submit=False):
