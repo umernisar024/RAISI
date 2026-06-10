@@ -358,6 +358,9 @@ server {
     listen 443 ssl;
     server_name siagent.yourorg.org;
 
+    # Allow large file uploads (PDFs, Word docs) -- default 1MB is too small
+    client_max_body_size 100M;
+
     # SSL certs -- Certbot will fill these in automatically
     ssl_certificate     /etc/letsencrypt/live/siagent.yourorg.org/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/siagent.yourorg.org/privkey.pem;
