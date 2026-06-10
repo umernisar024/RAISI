@@ -113,7 +113,6 @@ def _render_review_form(record: dict) -> None:
                     )
                     # Pre-populate document registry with submission metadata
                     # so citations are meaningful before/after ingestion
-                    from src.kb_submissions import KB_FOLDER_LABELS
                     registry_register(
                         source_file=record["stored_filename"],
                         title=record.get("content_name", ""),
