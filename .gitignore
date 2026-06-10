@@ -60,6 +60,9 @@ data/submissions.json
 # Daily usage tracking — deployment-specific
 data/daily_usage.json
 
+# Document registry — deployment-specific, rebuilt by ingestion
+data/document_registry.json
+
 # Node / JS tooling (used locally for ADR Word doc generation, not part of app)
 node_modules/
 package.json
