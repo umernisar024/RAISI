@@ -15,7 +15,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.storage_adapter import s3_upload_file, s3_move_file, s3_delete_file
+from src.storage_adapter import (
+    s3_upload_file, s3_move_file, s3_delete_file, is_s3_mode,
+    _get_s3_client, _get_s3_config,
+)
 
 # ── KB folder definitions ─────────────────────────────────────────────────────
 # Order controls dropdown display. Add new folders here only — do not rename
@@ -70,6 +73,9 @@ def ensure_kb_dirs() -> None:
 
 def _load_submissions() -> list[dict]:
     if not SUBMISSIONS_FILE.exists():
+        # Attempt to restore from S3 if in s3 mode
+        _s3_restore_submissions()
+    if not SUBMISSIONS_FILE.exists():
         return []
     try:
         return json.loads(SUBMISSIONS_FILE.read_text(encoding="utf-8"))
@@ -83,6 +89,35 @@ def _save_submissions(submissions: list[dict]) -> None:
         json.dumps(submissions, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    _s3_backup_submissions()
+
+
+def _s3_backup_submissions() -> None:
+    """Back up submissions.json to S3. No-op in local mode."""
+    if not is_s3_mode():
+        return
+    try:
+        s3 = _get_s3_client()
+        bucket, prefix = _get_s3_config()
+        key = f"{prefix}submissions.json"
+        s3.upload_file(str(SUBMISSIONS_FILE), bucket, key)
+    except Exception as e:
+        print(f"  [S3 backup] WARNING — submissions.json backup failed: {e}")
+
+
+def _s3_restore_submissions() -> None:
+    """Restore submissions.json from S3 if local file is missing. No-op in local mode."""
+    if not is_s3_mode():
+        return
+    try:
+        s3 = _get_s3_client()
+        bucket, prefix = _get_s3_config()
+        key = f"{prefix}submissions.json"
+        SUBMISSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        s3.download_file(bucket, key, str(SUBMISSIONS_FILE))
+        print(f"  [S3] Restored submissions.json from s3://{bucket}/{key}")
+    except Exception:
+        pass  # File doesn't exist in S3 yet — normal for first run
 
 
 def get_pending_submissions() -> list[dict]:
