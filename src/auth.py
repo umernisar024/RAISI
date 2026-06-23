@@ -79,14 +79,19 @@ def _save(users: dict) -> None:
 
 def _init() -> None:
     """
-    Create the default admin account on first run with a random password.
+    Create the default admin account on first run.
 
-    The generated password is printed to stderr so the deploying engineer
-    can note it down and log in for the first time.  It is never stored in
-    source code or version control.
+    If the RAISI_ADMIN_PASSWORD environment variable is set, it is used as
+    the admin password.  This allows deployments to inject a stable password
+    from a secrets manager (e.g. AWS Secrets Manager, SSM Parameter Store)
+    so that credentials survive instance replacement.
+
+    If the variable is not set, a random password is generated and printed
+    to stderr (legacy behaviour).
     """
     import sys
-    initial_pw = secrets.token_urlsafe(16)   # 128-bit URL-safe random token
+    env_pw = os.environ.get("RAISI_ADMIN_PASSWORD")
+    initial_pw = env_pw if env_pw else secrets.token_urlsafe(16)
     _save({
         "admin": {
             "password": _hash_password(initial_pw),
@@ -94,14 +99,17 @@ def _init() -> None:
             "name": "Administrator",
         }
     })
-    # Write to stderr so it appears in journalctl / server logs, not in
-    # the Streamlit UI or any log file that ships with the repo.
-    print("\n" + "=" * 60, file=sys.stderr)
-    print("FIRST RUN — admin account created.", file=sys.stderr)
-    print(f"  Username : admin", file=sys.stderr)
-    print(f"  Password : {initial_pw}", file=sys.stderr)
-    print("Log in and change this password immediately.", file=sys.stderr)
-    print("=" * 60 + "\n", file=sys.stderr)
+    if env_pw:
+        print("\n" + "=" * 60, file=sys.stderr)
+        print("FIRST RUN — admin account created from RAISI_ADMIN_PASSWORD.", file=sys.stderr)
+        print("=" * 60 + "\n", file=sys.stderr)
+    else:
+        print("\n" + "=" * 60, file=sys.stderr)
+        print("FIRST RUN — admin account created.", file=sys.stderr)
+        print(f"  Username : admin", file=sys.stderr)
+        print(f"  Password : {initial_pw}", file=sys.stderr)
+        print("Log in and change this password immediately.", file=sys.stderr)
+        print("=" * 60 + "\n", file=sys.stderr)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
